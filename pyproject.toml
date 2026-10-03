@@ -1,0 +1,87 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bypassfast"
+dynamic = ["version"]
+description = "Official Python SDK for the Bypass Fast antibot-solving API (Akamai, Kasada, Incapsula, PerimeterX)."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Bypass Fast" }]
+keywords = ["bypass.fast", "akamai", "kasada", "incapsula", "perimeterx", "sdk"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: AsyncIO",
+    "Typing :: Typed",
+]
+dependencies = ["httpx>=0.25,<1"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.8",
+    "ruff>=0.4",
+]
+
+[project.urls]
+Homepage = "https://bypass.fast"
+Documentation = "https://bypass.fast/docs"
+Pricing = "https://bypass.fast/pricing"
+
+[tool.hatch.version]
+path = "src/bypassfast/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bypassfast"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/bypassfast",
+    "tests",
+    "examples",
+    "README.md",
+    "CHANGELOG.md",
+    "pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["error"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+files = ["src", "tests", "examples"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "C4", "PIE", "PT", "RET"]
+ignore = ["RET505", "RET506"]
+
+[tool.ruff.lint.per-file-ignores]
+# Public models keep Optional/Union so typing.get_type_hints() (pydantic,
+# runtime validators) can evaluate them on Python 3.9.
+"src/bypassfast/_models.py" = ["UP007", "UP045"]
+"tests/*" = ["B011"]

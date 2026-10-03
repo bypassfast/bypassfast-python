@@ -1,0 +1,722 @@
+"""Request and response models.
+
+Requests are ``TypedDict`` s: every solver method takes them as keyword
+arguments (``client.kasada.sensor(script=..., ua=...)``) or as an unpacked
+mapping (``client.kasada.sensor(**request)``). Attribute names are the API's
+wire names.
+
+Responses are dataclasses. Unknown response fields are ignored by the typed
+attributes and kept in ``raw``; ``response`` carries the call's
+:class:`ResponseMeta`.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Literal, Optional, TypedDict, Union
+
+from ._errors import ResponseMeta
+
+__all__ = [
+    "AkamaiCPTRequest",
+    "AkamaiCPTResponse",
+    "AkamaiSBSDRequest",
+    "AkamaiSBSDResponse",
+    "AkamaiSecCPTRequest",
+    "AkamaiSecCPTResponse",
+    "AkamaiSensorConfig",
+    "AkamaiSensorRequest",
+    "AkamaiSensorResponse",
+    "Balance",
+    "IncapsulaReese84Request",
+    "IncapsulaResponse",
+    "IncapsulaUTMVCRequest",
+    "KasadaCDRequest",
+    "KasadaCDResponse",
+    "KasadaSensorRequest",
+    "KasadaSensorResponse",
+    "PerimeterxBlockedResponse",
+    "PerimeterxCookie",
+    "PerimeterxCookieParam",
+    "PerimeterxHoldRequest",
+    "PerimeterxInitRequest",
+    "PerimeterxPlatform",
+    "PerimeterxResponse",
+    "PerimeterxRetryAdvice",
+    "RawResponse",
+]
+
+PerimeterxPlatform = Literal["chrome-windows", "chrome-mac"]
+
+
+# ---------------------------------------------------------------------------
+# Requests
+# ---------------------------------------------------------------------------
+
+
+class AkamaiSensorConfig(TypedDict, total=False):
+    """Interaction-family overrides; sent only when ``debug`` is true."""
+
+    mouse: bool
+    keyboard: bool
+    touch: bool
+    beta: bool
+
+
+class AkamaiSensorRequest(TypedDict, total=False):
+    """Akamai Bot Manager ``sensor_data`` generation (mode ``sensor``).
+
+    ``script`` is the raw JavaScript (bytes, or text encoded as UTF-8); the SDK
+    base64-encodes it. After one successful script-bearing call the client
+    sends the compact ``script_id`` for the same bytes and resends the script
+    automatically on a remote cache miss. With ``session`` set, ``script`` and
+    ``script_id`` are not sent.
+    """
+
+    url: str
+    ua: str
+    abck: str
+    bm_sz: str
+    script: Union[bytes, str]
+    script_id: str
+    script_url: str
+    config: AkamaiSensorConfig
+    accept_language: str
+    language: str
+    timezone: str
+    session: str
+    device: Mapping[str, Any]
+    debug: bool
+
+
+class AkamaiSBSDRequest(TypedDict, total=False):
+    """Akamai SBSD side-band payload (mode ``sbsd``).
+
+    Keep the ``session`` from the first response and send it on every later
+    SBSD (or sensor) call for that page. Later calls may send ``script_id``
+    (also returned) instead of ``script``. ``sbsd_post="telemetry"`` asks for
+    the page's next telemetry post; wait ``wait_ms`` before posting it, or set
+    ``pace`` to have the response held until then.
+    """
+
+    url: str
+    ua: str
+    script: Union[bytes, str]
+    script_id: str
+    session: str
+    sbsd_post: str
+    pace: bool
+    script_url: str
+    sbsd_o: str
+    accept_language: str
+    language: str
+    timezone: str
+    uuid: str
+    device: Mapping[str, Any]
+    resource_urls: Sequence[str]
+    dom_resource_urls: Sequence[str]
+    debug: bool
+
+
+class AkamaiCPTRequest(TypedDict, total=False):
+    """Akamai Sec-CPT proof of work (mode ``cpt``)."""
+
+    token: str
+    difficulty: int
+    debug: bool
+
+
+class AkamaiSecCPTRequest(TypedDict, total=False):
+    """Akamai sec-cpt challenge page (mode ``sec_cpt``).
+
+    ``token``, ``timestamp``, ``nonce``, ``difficulty`` and ``count`` come from
+    the challenge iframe or a chained ``/_sec/verify`` response; ``sec_cpt`` is
+    the sec_cpt cookie value.
+    """
+
+    token: str
+    sec_cpt: str
+    timestamp: int
+    nonce: str
+    difficulty: int
+    count: int
+    debug: bool
+
+
+class KasadaSensorRequest(TypedDict, total=False):
+    """Kasada sensor (mode ``sensor``). ``script`` is the raw ``p.js`` source;
+    unlike Akamai it is not base64-encoded and is never cached."""
+
+    script: Union[str, bytes]
+    ua: str
+    session: str
+    script_url: str
+    url: str
+    page_origin: str
+    href: str
+    window_url: str
+    referrer: str
+    ancestor_origins: Sequence[str]
+    runtime_overrides: Mapping[str, Any]
+    accept_language: str
+    timezone: str
+    ip: str
+    challenge_token: str
+    script_name: str
+    seed: int
+    force_pool_variation: bool
+    now_ms: int
+    dt: Mapping[str, Any]
+    headers: Mapping[str, str]
+
+
+class KasadaCDRequest(TypedDict, total=False):
+    """Kasada CD proof of work (mode ``cd``)."""
+
+    script: Union[str, bytes]
+    st: int
+    ct: str
+    domain: str
+    work_time: int
+    rst: int
+    d: int
+    id: str
+    duration: float
+    fc: str
+    difficulty: int
+    subchallenge_count: int
+    seed_suffix: str
+    extra_token: str
+    is_mobile: bool
+    seed: int
+    now_ms: int
+
+
+class IncapsulaReese84Request(TypedDict, total=False):
+    """Incapsula Reese84 sensor (mode ``reese84``).
+
+    ``script`` is raw JavaScript. After a successful call the client omits it
+    for the same content at the same ``script_url`` and resends it
+    automatically on a remote cache miss. ``document_html`` is the challenged
+    page body; ``document_script_source_groups`` is its pre-extracted form.
+    """
+
+    script: Union[str, bytes]
+    ua: str
+    script_url: str
+    url: str
+    accept_language: str
+    ip: str
+    pow: str
+    old_token: str
+    session: str
+    headers: Mapping[str, str]
+    document_html: str
+    document_script_source_groups: Sequence[Sequence[str]]
+
+
+class IncapsulaUTMVCRequest(TypedDict, total=False):
+    """Incapsula ``___utmvc`` cookie workflow (mode ``utmvc``); same script
+    caching as :class:`IncapsulaReese84Request`."""
+
+    script: Union[str, bytes]
+    ua: str
+    script_url: str
+    url: str
+    accept_language: str
+    ip: str
+    session: str
+    headers: Mapping[str, str]
+    session_ids: Sequence[str]
+
+
+class PerimeterxCookieParam(TypedDict, total=False):
+    """A cookie to install before the page fetch. ``expires`` is a Unix time
+    in seconds (omit for a session cookie). A :class:`PerimeterxCookie` from
+    an earlier response is accepted too."""
+
+    name: str
+    value: str
+    domain: str
+    path: str
+    expires: int
+    secure: bool
+    http_only: bool
+
+
+class _PerimeterxInitRequired(TypedDict):
+    url: str
+    proxy: str
+
+
+class PerimeterxInitRequest(_PerimeterxInitRequired, total=False):
+    """PerimeterX / HUMAN page-sensor session (mode ``init``).
+
+    ``url`` is the page a user would open and ``proxy`` the exit the whole flow
+    must share (``http(s)://`` or ``socks5(h)://`` with credentials). Without
+    ``ua`` the solver draws a desktop Chrome build for ``platform`` and returns
+    the user agent it used.
+    """
+
+    ua: str
+    accept_language: str
+    timezone: str
+    platform: PerimeterxPlatform
+    referer: str
+    headers: Mapping[str, str]
+    cookies: Sequence[Union[PerimeterxCookieParam, PerimeterxCookie]]
+    app_id: str
+
+
+class PerimeterxBlockedResponse(TypedDict, total=False):
+    """The enforcement response exactly as received.
+
+    ``headers`` use lower-case names, comma-joined when repeated. A ``str``
+    body is sent as text (set ``body_base64`` when it already holds base64);
+    a ``bytes`` body is base64-encoded by the SDK.
+    """
+
+    url: str
+    method: str
+    status: int
+    headers: Mapping[str, str]
+    body: Union[str, bytes]
+    body_base64: bool
+
+
+class _PerimeterxHoldRequired(TypedDict):
+    session: str
+    proxy: str
+    blocked: PerimeterxBlockedResponse
+
+
+class PerimeterxHoldRequest(_PerimeterxHoldRequired, total=False):
+    """PerimeterX press-and-hold solve (mode ``holdcaptcha``) inside the
+    session from :meth:`init`. ``url`` is used only when ``blocked["url"]`` is
+    empty; ``ua`` defaults to the session's user agent."""
+
+    url: str
+    ua: str
+    headers: Mapping[str, str]
+
+
+# ---------------------------------------------------------------------------
+# Response decoding helpers
+# ---------------------------------------------------------------------------
+
+
+class _FieldTypeError(ValueError):
+    def __init__(self, key: str, expected: str) -> None:
+        super().__init__(f'field "{key}": expected {expected}')
+
+
+def _str(data: Mapping[str, Any], key: str) -> str:
+    value = data.get(key)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    raise _FieldTypeError(key, "a string")
+
+
+def _bool(data: Mapping[str, Any], key: str) -> bool:
+    value = data.get(key)
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    raise _FieldTypeError(key, "a boolean")
+
+
+def _float(data: Mapping[str, Any], key: str) -> float:
+    value = data.get(key)
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            number = float(value)
+        except OverflowError:
+            number = math.inf
+        if math.isfinite(number):
+            return number
+    raise _FieldTypeError(key, "a number")
+
+
+def _int(data: Mapping[str, Any], key: str) -> int:
+    value = data.get(key)
+    if value is None:
+        return 0
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    raise _FieldTypeError(key, "an integer")
+
+
+def _str_list(data: Mapping[str, Any], key: str) -> list[str]:
+    value = data.get(key)
+    if value is None:
+        return []
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return list(value)
+    raise _FieldTypeError(key, "an array of strings")
+
+
+def _str_map(data: Mapping[str, Any], key: str) -> dict[str, str]:
+    value = data.get(key)
+    if value is None:
+        return {}
+    if isinstance(value, dict) and all(isinstance(item, str) for item in value.values()):
+        return dict(value)
+    raise _FieldTypeError(key, "an object of strings")
+
+
+def _object(data: Mapping[str, Any], key: str) -> dict[str, Any] | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    raise _FieldTypeError(key, "an object")
+
+
+# ---------------------------------------------------------------------------
+# Responses
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AkamaiSensorResponse:
+    """``sensor_data`` plus the exact client identity (``ua``, ``language``)
+    to use for the target exchange. ``script_id`` lets later calls skip the
+    script upload."""
+
+    cost: float = 0.0
+    success: bool = False
+    sensor_data: str = ""
+    ua: str = ""
+    session: str = ""
+    language: str = ""
+    script_id: str = ""
+    debug: Any = None
+    response: ResponseMeta = field(default_factory=ResponseMeta)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def _from_wire(cls, data: dict[str, Any], meta: ResponseMeta) -> AkamaiSensorResponse:
+        return cls(
+            cost=_float(data, "cost"),
+            success=_bool(data, "success"),
+            sensor_data=_str(data, "sensor_data"),
+            ua=_str(data, "ua"),
+            session=_str(data, "session"),
+            language=_str(data, "language"),
+            script_id=_str(data, "script_id"),
+            debug=data.get("debug"),
+            response=meta,
+            raw=data,
+        )
+
+
+@dataclass
+class AkamaiSBSDResponse:
+    """The encrypted body to submit upstream, the ``session`` pinning this
+    page's device, and the ``script_id`` later calls may send instead of the
+    script. On a telemetry response ``sbsd_post`` is ``"telemetry"``, ``ind``
+    says which post it is and ``wait_ms`` how long to wait before posting."""
+
+    cost: float = 0.0
+    success: bool = False
+    body: str = ""
+    session: str = ""
+    script_id: str = ""
+    sbsd_post: str = ""
+    ind: int = 0
+    wait_ms: int = 0
+    debug: Any = None
+    response: ResponseMeta = field(default_factory=ResponseMeta)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def _from_wire(cls, data: dict[str, Any], meta: ResponseMeta) -> AkamaiSBSDResponse:
+        return cls(
+            cost=_float(data, "cost"),
+            success=_bool(data, "success"),
+            body=_str(data, "body"),
+            session=_str(data, "session"),
+            script_id=_str(data, "script_id"),
+            sbsd_post=_str(data, "sbsd_post"),
+            ind=_int(data, "ind"),
+            wait_ms=_int(data, "wait_ms"),
+            debug=data.get("debug"),
+            response=meta,
+            raw=data,
+        )
+
+
+@dataclass
+class AkamaiCPTResponse:
+    """The Sec-CPT proof answers."""
+
+    cost: float = 0.0
+    success: bool = False
+    answers: list[str] = field(default_factory=list)
+    debug: Any = None
+    response: ResponseMeta = field(default_factory=ResponseMeta)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def _from_wire(cls, data: dict[str, Any], meta: ResponseMeta) -> AkamaiCPTResponse:
+        return cls(
+            cost=_float(data, "cost"),
+            success=_bool(data, "success"),
+            answers=_str_list(data, "answers"),
+            debug=data.get("debug"),
+            response=meta,
+            raw=data,
+        )
+
+
+@dataclass
+class AkamaiSecCPTResponse:
+    """``count`` proof answers and ``body``, the exact request body to POST to
+    ``/_sec/verify?provider=<provider>``."""
+
+    cost: float = 0.0
+    success: bool = False
+    answers: list[str] = field(default_factory=list)
+    body: str = ""
+    debug: Any = None
+    response: ResponseMeta = field(default_factory=ResponseMeta)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def _from_wire(cls, data: dict[str, Any], meta: ResponseMeta) -> AkamaiSecCPTResponse:
+        return cls(
+            cost=_float(data, "cost"),
+            success=_bool(data, "success"),
+            answers=_str_list(data, "answers"),
+            body=_str(data, "body"),
+            debug=data.get("debug"),
+            response=meta,
+            raw=data,
+        )
+
+
+@dataclass
+class KasadaSensorResponse:
+    """The encrypted ``payload`` for ``/tms`` plus the ``headers`` and
+    ``user_agent`` to send with it. Attach every returned header."""
+
+    cost: float = 0.0
+    payload: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+    device_id: str = ""
+    session: str = ""
+    user_agent: str = ""
+    cache_hit: bool = False
+    duration_ms: int = 0
+    response: ResponseMeta = field(default_factory=ResponseMeta)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def _from_wire(cls, data: dict[str, Any], meta: ResponseMeta) -> KasadaSensorResponse:
+        return cls(
+            cost=_float(data, "cost"),
+            payload=_str(data, "payload"),
+            headers=_str_map(data, "headers"),
+            warnings=_str_list(data, "warnings"),
+            device_id=_str(data, "device_id"),
+            session=_str(data, "session"),
+            user_agent=_str(data, "user_agent"),
+            cache_hit=_bool(data, "cache_hit"),
+            duration_ms=_int(data, "duration_ms"),
+            response=meta,
+            raw=data,
+        )
+
+
+@dataclass
+class KasadaCDResponse:
+    """``payload`` is the JSON string to send as ``x-kpsdk-cd``."""
+
+    cost: float = 0.0
+    payload: str = ""
+    duration_ms: int = 0
+    response: ResponseMeta = field(default_factory=ResponseMeta)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def _from_wire(cls, data: dict[str, Any], meta: ResponseMeta) -> KasadaCDResponse:
+        return cls(
+            cost=_float(data, "cost"),
+            payload=_str(data, "payload"),
+            duration_ms=_int(data, "duration_ms"),
+            response=meta,
+            raw=data,
+        )
+
+
+@dataclass
+class IncapsulaResponse:
+    """Shared by Reese84 and UTMVC. UTMVC fills ``cookie``, ``cookie_name`` and
+    ``submit_path``; Reese84 fills ``device_id`` and ``session``."""
+
+    cost: float = 0.0
+    payload: str = ""
+    backend: str = ""
+    device_id: str = ""
+    session: str = ""
+    duration_ms: int = 0
+    cookie: str = ""
+    cookie_name: str = ""
+    submit_path: str = ""
+    response: ResponseMeta = field(default_factory=ResponseMeta)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def _from_wire(cls, data: dict[str, Any], meta: ResponseMeta) -> IncapsulaResponse:
+        return cls(
+            cost=_float(data, "cost"),
+            payload=_str(data, "payload"),
+            backend=_str(data, "backend"),
+            device_id=_str(data, "device_id"),
+            session=_str(data, "session"),
+            duration_ms=_int(data, "duration_ms"),
+            cookie=_str(data, "cookie"),
+            cookie_name=_str(data, "cookie_name"),
+            submit_path=_str(data, "submit_path"),
+            response=meta,
+            raw=data,
+        )
+
+
+@dataclass
+class PerimeterxCookie:
+    """A cookie the solver holds. ``expires`` is a Unix time in seconds, 0 for
+    a session cookie. Instances can be passed back in ``init(cookies=...)``."""
+
+    name: str = ""
+    value: str = ""
+    domain: str = ""
+    path: str = ""
+    expires: int = 0
+    secure: bool = False
+    http_only: bool = False
+
+    @classmethod
+    def _from_wire(cls, data: Mapping[str, Any]) -> PerimeterxCookie:
+        return cls(
+            name=_str(data, "name"),
+            value=_str(data, "value"),
+            domain=_str(data, "domain"),
+            path=_str(data, "path"),
+            expires=_int(data, "expires"),
+            secure=_bool(data, "secure"),
+            http_only=_bool(data, "http_only"),
+        )
+
+
+@dataclass
+class PerimeterxRetryAdvice:
+    """How to proceed after a rejected hold."""
+
+    change_exit: bool = False
+    reason: str = ""
+
+
+@dataclass
+class PerimeterxResponse:
+    """Result of :meth:`init` or :meth:`solve_hold`.
+
+    ``success`` true: install every cookie and send (or retry once) your
+    protected request. ``success`` false: the hold was rejected and ``cookies``
+    are the pre-hold cookies. A rejected hold is a billed 2xx, not an error;
+    do not retry it unless ``retry`` explicitly supplies a safe action.
+    ``ua`` is the user agent the session runs as; send every request for the
+    session with exactly this value.
+    """
+
+    success: bool = False
+    cookies: list[PerimeterxCookie] = field(default_factory=list)
+    session: str = ""
+    retry: Optional[PerimeterxRetryAdvice] = None
+    ua: str = ""
+    cost: float = 0.0
+    response: ResponseMeta = field(default_factory=ResponseMeta)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @property
+    def rejected(self) -> bool:
+        """Whether the hold was rejected (``success`` is false)."""
+        return not self.success
+
+    @property
+    def change_exit(self) -> bool:
+        """Whether to move to another exit and start again from ``init``."""
+        return not self.success and self.retry is not None and self.retry.change_exit
+
+    @classmethod
+    def _from_wire(cls, data: dict[str, Any], meta: ResponseMeta) -> PerimeterxResponse:
+        raw_cookies = data.get("cookies")
+        if raw_cookies is None:
+            raw_cookies = []
+        if not isinstance(raw_cookies, list) or not all(isinstance(c, dict) for c in raw_cookies):
+            raise _FieldTypeError("cookies", "an array of objects")
+        retry_data = _object(data, "retry")
+        retry = None
+        if retry_data is not None:
+            retry = PerimeterxRetryAdvice(
+                change_exit=_bool(retry_data, "change_exit"), reason=_str(retry_data, "reason")
+            )
+        return cls(
+            success=_bool(data, "success"),
+            cookies=[PerimeterxCookie._from_wire(cookie) for cookie in raw_cookies],
+            session=_str(data, "session"),
+            retry=retry,
+            ua=_str(data, "ua"),
+            cost=_float(data, "cost"),
+            response=meta,
+            raw=data,
+        )
+
+
+@dataclass
+class Balance:
+    """The prepaid account balance. ``error_id`` is the wire's ``errorId``."""
+
+    error_id: int = 0
+    org_id: str = ""
+    balance: float = 0.0
+    balance_cents: int = 0
+    currency: str = ""
+    response: ResponseMeta = field(default_factory=ResponseMeta)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def _from_wire(cls, data: dict[str, Any], meta: ResponseMeta) -> Balance:
+        return cls(
+            error_id=_int(data, "errorId"),
+            org_id=_str(data, "org_id"),
+            balance=_float(data, "balance"),
+            balance_cents=_int(data, "balance_cents"),
+            currency=_str(data, "currency"),
+            response=meta,
+            raw=data,
+        )
+
+
+@dataclass
+class RawResponse:
+    """Result of the generic :meth:`solve` escape hatch: the decoded JSON
+    object and the call's metadata."""
+
+    raw: dict[str, Any] = field(default_factory=dict)
+    response: ResponseMeta = field(default_factory=ResponseMeta)
+
+    @classmethod
+    def _from_wire(cls, data: dict[str, Any], meta: ResponseMeta) -> RawResponse:
+        return cls(raw=data, response=meta)
