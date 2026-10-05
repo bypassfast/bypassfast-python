@@ -128,13 +128,10 @@ _AKAMAI_SENSOR = (
     ("script", _OMIT),
     ("script_id", _OMIT),
     ("script_url", ""),
-    ("config", _OMIT),
     ("accept_language", _OMIT),
     ("language", _OMIT),
     ("timezone", _OMIT),
     ("session", _OMIT),
-    ("device", _OMIT),
-    ("debug", _OMIT),
 )
 
 
@@ -160,13 +157,8 @@ def akamai_sensor(core: Core, request: Mapping[str, Any]) -> Call[AkamaiSensorRe
         used_compact = bool(script) and (
             explicit or core.scripts.matches("akamai:" + script_id, script_id)
         )
-    config: dict[str, bool] | None = None
-    if request.get("debug"):
-        given = request.get("config") or {}
-        config = {key: bool(given.get(key)) for key in ("mouse", "keyboard", "touch", "beta")}
-
     def build(script_field: str) -> dict[str, Any]:
-        values = {**request, "script": script_field, "script_id": script_id, "config": config}
+        values = {**request, "script": script_field, "script_id": script_id}
         wire: dict[str, Any] = {"mode": "sensor"}
         _emit(wire, values, _AKAMAI_SENSOR)
         return wire
@@ -209,10 +201,8 @@ _AKAMAI_SBSD = (
     ("language", _OMIT),
     ("timezone", _OMIT),
     ("uuid", _OMIT),
-    ("device", _OMIT),
     ("resource_urls", _OMIT),
     ("dom_resource_urls", _OMIT),
-    ("debug", _OMIT),
 )
 
 
@@ -239,7 +229,7 @@ def akamai_sbsd(core: Core, request: Mapping[str, Any]) -> Call[AkamaiSBSDRespon
     )
 
 
-_AKAMAI_CPT = (("token", ""), ("difficulty", 0), ("debug", _OMIT))
+_AKAMAI_CPT = (("token", ""), ("difficulty", 0))
 
 
 def akamai_cpt(core: Core, request: Mapping[str, Any]) -> Call[AkamaiCPTResponse]:
@@ -263,7 +253,6 @@ _AKAMAI_SEC_CPT = (
     ("nonce", ""),
     ("difficulty", 0),
     ("count", 0),
-    ("debug", _OMIT),
 )
 
 

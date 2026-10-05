@@ -133,18 +133,6 @@ def test_akamai_session_drops_script_and_script_id() -> None:
     assert len(client._core.scripts) == 0
 
 
-def test_akamai_debug_sends_all_four_config_flags() -> None:
-    api = FakeAPI(reply(200, {"success": True, "sensor_data": "s", "debug": {"trace": [1]}}))
-    client = make_client(api)
-    result = client.akamai.sensor(debug=True, config={"touch": True})
-    client.akamai.sensor(config={"touch": True})
-    debug_body, plain_body = api.bodies
-    assert debug_body["config"] == {"mouse": False, "keyboard": False, "touch": True, "beta": False}
-    assert debug_body["debug"] is True
-    assert "config" not in plain_body
-    assert result.debug == {"trace": [1]}
-
-
 def test_akamai_text_script_is_utf8_and_matches_the_helper() -> None:
     api = FakeAPI(SENSOR_OK)
     make_client(api).akamai.sensor(script="var é = 1;")
@@ -162,11 +150,9 @@ def test_akamai_sensor_full_wire_order() -> None:
         bm_sz="b",
         script=b"s",
         script_url="su",
-        debug=True,
         accept_language="en",
         language="en-US",
         timezone="UTC",
-        device={"k": 1},
     )
     assert keys(api.bodies[0]) == [
         "mode",
@@ -177,12 +163,9 @@ def test_akamai_sensor_full_wire_order() -> None:
         "script",
         "script_id",
         "script_url",
-        "config",
         "accept_language",
         "language",
         "timezone",
-        "device",
-        "debug",
     ]
 
 

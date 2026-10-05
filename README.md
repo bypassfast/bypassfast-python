@@ -281,4 +281,4 @@ credentials, device sessions, cookies and tokens.
 
 ## License
 
-License: to be chosen by the maintainer before publishing.
+MIT. See [LICENSE](LICENSE).

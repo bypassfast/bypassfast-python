@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.18"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,6 +7,8 @@ name = "bypassfast"
 dynamic = ["version"]
 description = "Official Python SDK for the Bypass Fast antibot-solving API (Akamai, Kasada, Incapsula, PerimeterX)."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
 authors = [{ name = "Bypass Fast" }]
 keywords = ["bypass.fast", "akamai", "kasada", "incapsula", "perimeterx", "sdk"]
@@ -38,6 +40,8 @@ dev = [
 Homepage = "https://bypass.fast"
 Documentation = "https://bypass.fast/docs"
 Pricing = "https://bypass.fast/pricing"
+Repository = "https://github.com/bypassfast/bypassfast-python"
+Changelog = "https://github.com/bypassfast/bypassfast-python/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
 path = "src/bypassfast/_version.py"
@@ -52,6 +56,7 @@ include = [
     "examples",
     "README.md",
     "CHANGELOG.md",
+    "LICENSE",
     "pyproject.toml",
 ]
 

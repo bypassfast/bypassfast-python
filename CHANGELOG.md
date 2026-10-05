@@ -3,9 +3,10 @@
 All notable changes to the `bypassfast` Python SDK are recorded here. The
 project follows [Semantic Versioning](https://semver.org/).
 
-## 0.1.0 (unreleased)
+## 0.1.0 - 2026-10-05
 
-First release, matching the wire contract of the Bypass Fast Go SDK 0.2.0.
+First release, matching the wire contract of the Bypass Fast Go SDK 0.2.1.
+Licensed under the MIT License.
 
 - `Client` (synchronous) and `AsyncClient` (asyncio) with identical methods,
   built on `httpx`.

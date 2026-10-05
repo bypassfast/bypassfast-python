@@ -26,7 +26,6 @@ __all__ = [
     "AkamaiSBSDResponse",
     "AkamaiSecCPTRequest",
     "AkamaiSecCPTResponse",
-    "AkamaiSensorConfig",
     "AkamaiSensorRequest",
     "AkamaiSensorResponse",
     "Balance",
@@ -56,15 +55,6 @@ PerimeterxPlatform = Literal["chrome-windows", "chrome-mac"]
 # ---------------------------------------------------------------------------
 
 
-class AkamaiSensorConfig(TypedDict, total=False):
-    """Interaction-family overrides; sent only when ``debug`` is true."""
-
-    mouse: bool
-    keyboard: bool
-    touch: bool
-    beta: bool
-
-
 class AkamaiSensorRequest(TypedDict, total=False):
     """Akamai Bot Manager ``sensor_data`` generation (mode ``sensor``).
 
@@ -82,13 +72,10 @@ class AkamaiSensorRequest(TypedDict, total=False):
     script: Union[bytes, str]
     script_id: str
     script_url: str
-    config: AkamaiSensorConfig
     accept_language: str
     language: str
     timezone: str
     session: str
-    device: Mapping[str, Any]
-    debug: bool
 
 
 class AkamaiSBSDRequest(TypedDict, total=False):
@@ -114,10 +101,8 @@ class AkamaiSBSDRequest(TypedDict, total=False):
     language: str
     timezone: str
     uuid: str
-    device: Mapping[str, Any]
     resource_urls: Sequence[str]
     dom_resource_urls: Sequence[str]
-    debug: bool
 
 
 class AkamaiCPTRequest(TypedDict, total=False):
@@ -125,7 +110,6 @@ class AkamaiCPTRequest(TypedDict, total=False):
 
     token: str
     difficulty: int
-    debug: bool
 
 
 class AkamaiSecCPTRequest(TypedDict, total=False):
@@ -142,7 +126,6 @@ class AkamaiSecCPTRequest(TypedDict, total=False):
     nonce: str
     difficulty: int
     count: int
-    debug: bool
 
 
 class KasadaSensorRequest(TypedDict, total=False):
@@ -400,7 +383,6 @@ class AkamaiSensorResponse:
     session: str = ""
     language: str = ""
     script_id: str = ""
-    debug: Any = None
     response: ResponseMeta = field(default_factory=ResponseMeta)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -414,7 +396,6 @@ class AkamaiSensorResponse:
             session=_str(data, "session"),
             language=_str(data, "language"),
             script_id=_str(data, "script_id"),
-            debug=data.get("debug"),
             response=meta,
             raw=data,
         )
@@ -435,7 +416,6 @@ class AkamaiSBSDResponse:
     sbsd_post: str = ""
     ind: int = 0
     wait_ms: int = 0
-    debug: Any = None
     response: ResponseMeta = field(default_factory=ResponseMeta)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -450,7 +430,6 @@ class AkamaiSBSDResponse:
             sbsd_post=_str(data, "sbsd_post"),
             ind=_int(data, "ind"),
             wait_ms=_int(data, "wait_ms"),
-            debug=data.get("debug"),
             response=meta,
             raw=data,
         )
@@ -463,7 +442,6 @@ class AkamaiCPTResponse:
     cost: float = 0.0
     success: bool = False
     answers: list[str] = field(default_factory=list)
-    debug: Any = None
     response: ResponseMeta = field(default_factory=ResponseMeta)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -473,7 +451,6 @@ class AkamaiCPTResponse:
             cost=_float(data, "cost"),
             success=_bool(data, "success"),
             answers=_str_list(data, "answers"),
-            debug=data.get("debug"),
             response=meta,
             raw=data,
         )
@@ -488,7 +465,6 @@ class AkamaiSecCPTResponse:
     success: bool = False
     answers: list[str] = field(default_factory=list)
     body: str = ""
-    debug: Any = None
     response: ResponseMeta = field(default_factory=ResponseMeta)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -499,7 +475,6 @@ class AkamaiSecCPTResponse:
             success=_bool(data, "success"),
             answers=_str_list(data, "answers"),
             body=_str(data, "body"),
-            debug=data.get("debug"),
             response=meta,
             raw=data,
         )
