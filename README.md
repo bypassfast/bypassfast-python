@@ -112,7 +112,12 @@ site.post(
 ```
 
 Pass `session=solved.session` on follow-up posts for the same page; with a
-session the script is not sent again.
+session the script is not sent again. A page posts its sensors seconds
+apart, and protected endpoints score a session whose sensors arrive a
+fraction of a second apart: either wait 2.5-4 s between the sensor calls of
+one session, or pass `pace=True` on them and the API holds each
+continuation response until that interval has passed (never more than 6 s,
+never the first call).
 
 Script handling is automatic. After a script-bearing solve succeeds, the
 client remembers the script's SHA-256 (never the script) and later fresh
