@@ -62,7 +62,10 @@ class AkamaiSensorRequest(TypedDict, total=False):
     base64-encodes it. After one successful script-bearing call the client
     sends the compact ``script_id`` for the same bytes and resends the script
     automatically on a remote cache miss. With ``session`` set, ``script`` and
-    ``script_id`` are not sent.
+    ``script_id`` are not sent. Set ``pace`` on the calls after the first to
+    have each response held until a person's interval (2.5-4 s) has passed
+    since the previous sensor: a page posts seconds apart, and sites score
+    sessions whose sensors arrive a fraction of a second apart.
     """
 
     url: str
@@ -76,6 +79,7 @@ class AkamaiSensorRequest(TypedDict, total=False):
     language: str
     timezone: str
     session: str
+    pace: bool
 
 
 class AkamaiSBSDRequest(TypedDict, total=False):

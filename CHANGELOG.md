@@ -3,6 +3,12 @@
 All notable changes to the `bypassfast` Python SDK are recorded here. The
 project follows [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- Akamai: `pace=True` on `akamai.sensor` asks the API to hold each
+  response until a person's interval (2.5-4 s) has passed since the
+  previous sensor.
+
 ## 0.1.0 - 2026-10-05
 
 First release, matching the wire contract of the Bypass Fast Go SDK 0.2.1.

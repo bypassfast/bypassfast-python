@@ -169,6 +169,15 @@ def test_akamai_sensor_full_wire_order() -> None:
     ]
 
 
+def test_akamai_sensor_sends_pace_only_when_set() -> None:
+    api = FakeAPI(SENSOR_OK, SENSOR_OK)
+    sensor = make_client(api).akamai.sensor
+    sensor(url="u", ua="a", abck="c", bm_sz="b", script_url="su", session="prior")
+    sensor(url="u", ua="a", abck="c", bm_sz="b", script_url="su", session="prior", pace=True)
+    assert "pace" not in api.bodies[0]
+    assert api.bodies[1]["pace"] is True
+
+
 # -- Akamai SBSD, CPT, SecCPT ------------------------------------------------------
 
 

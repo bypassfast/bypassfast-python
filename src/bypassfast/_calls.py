@@ -132,6 +132,7 @@ _AKAMAI_SENSOR = (
     ("language", _OMIT),
     ("timezone", _OMIT),
     ("session", _OMIT),
+    ("pace", _OMIT),
 )
 
 
