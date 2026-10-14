@@ -476,6 +476,10 @@ def test_perimeterx_init_and_hold_wire() -> None:
             "body": "eyJhcHBJZCI6IlBYYWJjIn0=",
             "body_base64": True,
         },
+        cookies=[
+            {"name": "_abck", "value": "a", "domain": ".example.com", "path": "/"},
+            PerimeterxCookie(name="_pxhd", value="h"),
+        ],
     )
 
     assert (init.success, init.session, init.cost) == (True, "sess-1", 0.004)
@@ -490,7 +494,12 @@ def test_perimeterx_init_and_hold_wire() -> None:
     assert init_wire["cookies"] == [
         {"name": "ak_bmsc", "value": "x", "domain": ".example.com", "path": "/"}
     ]
-    assert keys(hold_wire) == ["mode", "proxy", "session", "blocked"]
+    assert keys(hold_wire) == ["mode", "proxy", "cookies", "session", "blocked"]
+    # The cookies held at the block travel with the hold, HUMAN's included.
+    assert hold_wire["cookies"] == [
+        {"name": "_abck", "value": "a", "domain": ".example.com", "path": "/"},
+        {"name": "_pxhd", "value": "h"},
+    ]
     assert hold_wire["blocked"] == {
         "url": "https://www.example.com/api/v1/availability",
         "method": "POST",
@@ -545,6 +554,8 @@ def test_perimeterx_hold_url_fallback_and_status_zero() -> None:
     )
     assert api.bodies[0]["url"] == "https://www.example.com/page"
     assert api.bodies[0]["blocked"] == {"url": "", "status": 0, "body": ""}
+    # No cookies given: no cookies key, and the solver refreshes the page itself.
+    assert "cookies" not in api.bodies[0]
 
 
 def test_perimeterx_retry_advice() -> None:

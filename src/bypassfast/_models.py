@@ -282,11 +282,18 @@ class _PerimeterxHoldRequired(TypedDict):
 class PerimeterxHoldRequest(_PerimeterxHoldRequired, total=False):
     """PerimeterX press-and-hold solve (mode ``holdcaptcha``) inside the
     session from :meth:`init`. ``url`` is used only when ``blocked["url"]`` is
-    empty; ``ua`` defaults to the session's user agent."""
+    empty; ``ua`` defaults to the session's user agent. ``cookies`` are the
+    cookies you hold for the site at the block (the set the blocked request
+    carried, HUMAN's included): the solver lays them over its session jar so
+    the hold runs with the site's current session and other protection
+    layers, then returns only HUMAN's cookies and the ones the hold set or
+    changed. Without them the solver refreshes the page itself before the
+    hold."""
 
     url: str
     ua: str
     headers: Mapping[str, str]
+    cookies: Sequence[Union[PerimeterxCookieParam, PerimeterxCookie]]
 
 
 # ---------------------------------------------------------------------------

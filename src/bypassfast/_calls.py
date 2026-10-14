@@ -445,7 +445,9 @@ _PERIMETERX_WIRE = (
 )
 _PX_INIT_FIELDS = tuple(f for f in _PERIMETERX_WIRE if f[0] not in ("session", "blocked"))
 _PX_HOLD_FIELDS = tuple(
-    f for f in _PERIMETERX_WIRE if f[0] in ("url", "proxy", "ua", "headers", "session", "blocked")
+    f
+    for f in _PERIMETERX_WIRE
+    if f[0] in ("url", "proxy", "ua", "headers", "cookies", "session", "blocked")
 )
 _PX_BLOCKED_FIELDS = (
     ("url", ""),
@@ -530,8 +532,9 @@ def perimeterx_hold(core: Core, request: Mapping[str, Any]) -> Call[PerimeterxRe
         {**blocked, "body": body, "body_encoding": encoding},
         _PX_BLOCKED_FIELDS,
     )
+    cookies = [_cookie_wire(cookie) for cookie in request.get("cookies") or ()]
     wire: dict[str, Any] = {"mode": "holdcaptcha"}
-    _emit(wire, {**request, "blocked": blocked_wire}, _PERIMETERX_WIRE)
+    _emit(wire, {**request, "cookies": cookies, "blocked": blocked_wire}, _PERIMETERX_WIRE)
     return _perimeterx_call(core, wire)
 
 

@@ -175,6 +175,7 @@ if is_human_block(response):  # 428 JSON block or a px-captcha page
             "headers": lower_case_headers,  # repeated headers comma-joined
             "body": response.content,  # bytes are sent base64-encoded
         },
+        cookies=cookies_held_at_the_block,  # your jar for the site, HUMAN's included
     )
     if not hold.success:
         raise SystemExit("hold rejected")  # billed; do not loop
