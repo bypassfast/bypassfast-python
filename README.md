@@ -131,7 +131,17 @@ the compact form first. Each client remembers up to 256 script hashes
 
 `client.akamai.sbsd(...)` takes the SBSD script (or `script_id` from an
 earlier response) and `sbsd_o`; keep the returned `session` for every later
-SBSD or sensor call on that page. `client.akamai.cpt(token=..., difficulty=...)`
+SBSD or sensor call on that page. A normal `200` page can run SBSD too: a
+first-party script whose URL carries `?v=` sits next to the sensor script, and
+the page response sets `bm_so`. Post it as part of the page, before any
+protected request: after the first sensor post, call `client.akamai.sbsd(...)`
+with the sensor's `session` and `sbsd_o` set to the `bm_so` value, POST
+`{"body": ...}` to the script path without its query, continue the sensor with
+the `session` it returned, then ask for the two telemetry posts with
+`sbsd_post="telemetry"` (wait `wait_ms`, or pass `pace=True`). The full order is on the
+[SBSD docs page](https://bypass.fast/docs/solvers/akamai/sbsd#inline-sbsd-on-a-normal-page);
+a client that skips it still gets a valid `_abck`, and the protected endpoint
+answers `403` instead. `client.akamai.cpt(token=..., difficulty=...)`
 and `client.akamai.sec_cpt(...)` solve the proof-of-work challenges.
 
 ## Incapsula
