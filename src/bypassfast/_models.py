@@ -244,7 +244,10 @@ class PerimeterxInitRequest(_PerimeterxInitRequired, total=False):
     ``url`` is the page a user would open and ``proxy`` the exit the whole flow
     must share (``http(s)://`` or ``socks5(h)://`` with credentials). Without
     ``ua`` the solver draws a desktop Chrome build for ``platform`` and returns
-    the user agent it used.
+    the user agent it used. Without ``accept_language`` it draws a real Chrome
+    Accept-Language for the exit's country and returns it as
+    ``accept_language``. ``timezone`` is ignored: the session's zone follows
+    where the exit is.
     """
 
     ua: str
@@ -623,7 +626,9 @@ class PerimeterxResponse:
     are the pre-hold cookies. A rejected hold is a billed 2xx, not an error;
     do not retry it unless ``retry`` explicitly supplies a safe action.
     ``ua`` is the user agent the session runs as; send every request for the
-    session with exactly this value.
+    session with exactly this value. ``accept_language`` is the
+    Accept-Language the session runs as, likewise: your own when you sent
+    one, otherwise the value the API drew for the proxy exit's country.
     """
 
     success: bool = False
@@ -631,6 +636,7 @@ class PerimeterxResponse:
     session: str = ""
     retry: Optional[PerimeterxRetryAdvice] = None
     ua: str = ""
+    accept_language: str = ""
     cost: float = 0.0
     response: ResponseMeta = field(default_factory=ResponseMeta)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -664,6 +670,7 @@ class PerimeterxResponse:
             session=_str(data, "session"),
             retry=retry,
             ua=_str(data, "ua"),
+            accept_language=_str(data, "accept_language"),
             cost=_float(data, "cost"),
             response=meta,
             raw=data,

@@ -5,6 +5,11 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+- PerimeterX: `PerimeterxResponse.accept_language` is the Accept-Language the
+  session runs as. Without `accept_language` in `init` the API draws a real
+  Chrome value for the proxy exit's country; the SDK keeps your own value
+  when you set one. Send every request of the session with `ua` and
+  `accept_language`.
 - Akamai: `pace=True` on `akamai.sensor` asks the API to hold each
   response until a person's interval (2.5-4 s) has passed since the
   previous sensor.

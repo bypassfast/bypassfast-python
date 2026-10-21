@@ -528,6 +528,25 @@ def test_perimeterx_init_without_ua_adopts_the_solver_draw() -> None:
     assert result.ua == "Mozilla/5.0 Chrome/152.0.0.0"
 
 
+def test_perimeterx_init_adopts_the_session_accept_language() -> None:
+    drawn = "en-GB,en;q=0.9"
+    api = FakeAPI(
+        reply(200, {"success": True, "cookies": [], "session": "s", "accept_language": drawn}),
+        reply(200, {"success": True, "cookies": [], "session": "s"}),
+    )
+    client = make_client(api)
+    # None set: not sent, and the result carries the value the API drew.
+    result = client.perimeterx.init(url="https://www.example.com/", proxy=PROXY)
+    assert "accept_language" not in api.bodies[0]
+    assert result.accept_language == drawn
+    # Set by the caller: sent, and kept when the API does not echo it.
+    own = client.perimeterx.init(
+        url="https://www.example.com/", proxy=PROXY, accept_language="tr-TR,tr;q=0.9"
+    )
+    assert api.bodies[1]["accept_language"] == "tr-TR,tr;q=0.9"
+    assert own.accept_language == "tr-TR,tr;q=0.9"
+
+
 def test_perimeterx_cookies_from_a_response_can_be_sent_back() -> None:
     api = FakeAPI(reply(200, {"success": True}))
     cookie = PerimeterxCookie(name="_px3", value="v", http_only=True)

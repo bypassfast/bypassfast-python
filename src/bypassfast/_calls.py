@@ -482,14 +482,25 @@ def _cookie_wire(cookie: object) -> dict[str, Any]:
     return wire
 
 
-def _perimeterx_call(core: Core, wire: dict[str, Any]) -> Call[PerimeterxResponse]:
+def _perimeterx_call(
+    core: Core, wire: dict[str, Any], accept_language: str = ""
+) -> Call[PerimeterxResponse]:
+    def finish(data: dict[str, Any], meta: ResponseMeta) -> PerimeterxResponse:
+        result = PerimeterxResponse._from_wire(data, meta)
+        # The value to send on every request of the session: the API's
+        # (drawn for the exit's country when the caller set none), else the
+        # caller's own.
+        if not result.accept_language and accept_language:
+            result.accept_language = accept_language
+        return result
+
     return Call(
         "POST",
         PERIMETERX_PATH,
         wire,
         const.MAX_PERIMETERX_REQUEST_BYTES,
         core.perimeterx_timeout,
-        PerimeterxResponse._from_wire,
+        finish,
     )
 
 
@@ -502,7 +513,7 @@ def perimeterx_init(core: Core, request: Mapping[str, Any]) -> Call[PerimeterxRe
     cookies = [_cookie_wire(cookie) for cookie in request.get("cookies") or ()]
     wire: dict[str, Any] = {"mode": "init"}
     _emit(wire, {**request, "cookies": cookies}, _PERIMETERX_WIRE)
-    return _perimeterx_call(core, wire)
+    return _perimeterx_call(core, wire, request.get("accept_language") or "")
 
 
 def perimeterx_hold(core: Core, request: Mapping[str, Any]) -> Call[PerimeterxResponse]:

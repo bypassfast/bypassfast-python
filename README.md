@@ -44,7 +44,7 @@ edge version, `Server-Timing` and the number of HTTP attempts.
 | Kasada CD | `client.kasada.cd(...)` | `payload` used as `x-kpsdk-cd` |
 | Incapsula Reese84 | `client.incapsula.reese84(...)` | sensor `payload`, `session` |
 | Incapsula UTMVC | `client.incapsula.utmvc(...)` | `___utmvc` `cookie` and `submit_path` |
-| PerimeterX init | `client.perimeterx.init(...)` | HUMAN `cookies`, `session`, `ua` |
+| PerimeterX init | `client.perimeterx.init(...)` | HUMAN `cookies`, `session`, `ua`, `accept_language` |
 | PerimeterX hold | `client.perimeterx.solve_hold(...)` | `success`, refreshed `cookies`, `retry` advice |
 
 `client.balance()` returns the prepaid balance. `client.solve(solver, body)`
@@ -169,15 +169,17 @@ same mode and `script_url`, and resends it automatically on
 
 ## PerimeterX / HUMAN
 
-PerimeterX runs through your proxy. Use the same proxy exit, Accept-Language
-and the returned `ua` for every request in the session.
+PerimeterX runs through your proxy. Use the same proxy exit and the returned
+`ua` and `accept_language` for every request in the session. Without
+`accept_language` in `init` the API draws a real Chrome value for the exit's
+country; with one, the session keeps yours.
 
 ```python
 init = client.perimeterx.init(url="https://www.example.com/", proxy=proxy_url)
 for cookie in init.cookies:
     site.cookies.set(cookie.name, cookie.value, domain=cookie.domain, path=cookie.path or "/")
 
-response = site.get(protected_url)  # your client, same proxy, ua=init.ua
+response = site.get(protected_url)  # same proxy, ua=init.ua, accept-language=init.accept_language
 if is_human_block(response):  # 428 JSON block or a px-captcha page
     hold = client.perimeterx.solve_hold(
         session=init.session,
