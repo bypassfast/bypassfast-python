@@ -547,6 +547,29 @@ def test_perimeterx_init_adopts_the_session_accept_language() -> None:
     assert own.accept_language == "tr-TR,tr;q=0.9"
 
 
+def test_perimeterx_init_platform_auto_returns_the_drawn_platform() -> None:
+    api = FakeAPI(
+        reply(
+            200,
+            {
+                "success": True,
+                "cookies": [],
+                "session": "s4",
+                "ua": "Mozilla/5.0 (Macintosh) Chrome/155.0.0.0",
+                "platform": "chrome-mac",
+                "cost": 0.004,
+            },
+        )
+    )
+    result = make_client(api).perimeterx.init(
+        url="https://www.example.com/", proxy=PROXY, platform="auto"
+    )
+    assert api.bodies[0]["platform"] == "auto"
+    assert "ua" not in api.bodies[0]
+    assert result.platform == "chrome-mac"
+    assert result.ua == "Mozilla/5.0 (Macintosh) Chrome/155.0.0.0"
+
+
 def test_perimeterx_cookies_from_a_response_can_be_sent_back() -> None:
     api = FakeAPI(reply(200, {"success": True}))
     cookie = PerimeterxCookie(name="_px3", value="v", http_only=True)

@@ -42,12 +42,18 @@ __all__ = [
     "PerimeterxHoldRequest",
     "PerimeterxInitRequest",
     "PerimeterxPlatform",
+    "PerimeterxPlatformRequest",
     "PerimeterxResponse",
     "PerimeterxRetryAdvice",
     "RawResponse",
 ]
 
 PerimeterxPlatform = Literal["chrome-windows", "chrome-mac"]
+# What ``init`` accepts for ``platform``: a persona family, or ``"auto"`` to
+# have the solver draw Windows or macOS and (without ``ua``) a current Chrome
+# major per session. Send ``"auto"`` only through exits that fit both Windows
+# and macOS clients; pin the platform on an exit of one OS class.
+PerimeterxPlatformRequest = Literal["chrome-windows", "chrome-mac", "auto"]
 
 
 # ---------------------------------------------------------------------------
@@ -248,12 +254,15 @@ class PerimeterxInitRequest(_PerimeterxInitRequired, total=False):
     Accept-Language for the exit's country and returns it as
     ``accept_language``. ``timezone`` is ignored: the session's zone follows
     where the exit is.
+    ``platform="auto"`` has the solver draw the platform too (Windows or
+    macOS, and a current Chrome major); read the draw from the response's
+    ``platform`` and ``ua``.
     """
 
     ua: str
     accept_language: str
     timezone: str
-    platform: PerimeterxPlatform
+    platform: PerimeterxPlatformRequest
     referer: str
     headers: Mapping[str, str]
     cookies: Sequence[Union[PerimeterxCookieParam, PerimeterxCookie]]
@@ -629,6 +638,8 @@ class PerimeterxResponse:
     session with exactly this value. ``accept_language`` is the
     Accept-Language the session runs as, likewise: your own when you sent
     one, otherwise the value the API drew for the proxy exit's country.
+    ``platform`` is the platform it runs as (``chrome-windows`` or
+    ``chrome-mac``); your client hints and TLS stack must match it.
     """
 
     success: bool = False
@@ -637,6 +648,7 @@ class PerimeterxResponse:
     retry: Optional[PerimeterxRetryAdvice] = None
     ua: str = ""
     accept_language: str = ""
+    platform: str = ""
     cost: float = 0.0
     response: ResponseMeta = field(default_factory=ResponseMeta)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -671,6 +683,7 @@ class PerimeterxResponse:
             retry=retry,
             ua=_str(data, "ua"),
             accept_language=_str(data, "accept_language"),
+            platform=_str(data, "platform"),
             cost=_float(data, "cost"),
             response=meta,
             raw=data,

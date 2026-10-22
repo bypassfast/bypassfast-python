@@ -172,7 +172,10 @@ same mode and `script_url`, and resends it automatically on
 PerimeterX runs through your proxy. Use the same proxy exit and the returned
 `ua` and `accept_language` for every request in the session. Without
 `accept_language` in `init` the API draws a real Chrome value for the exit's
-country; with one, the session keeps yours.
+country; with one, the session keeps yours. `platform="auto"`
+lets the API draw each session's platform (Windows or macOS) and Chrome
+version; `init.platform` and `init.ua` report the draw. Send `auto` only
+through exits that suit both Windows and macOS clients.
 
 ```python
 init = client.perimeterx.init(url="https://www.example.com/", proxy=proxy_url)
