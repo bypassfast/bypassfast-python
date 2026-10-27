@@ -9,7 +9,14 @@ from typing import Any
 import pytest
 
 import bypassfast
-from bypassfast import APIError, PerimeterxCookie, RetryPolicy, ValidationError, akamai_script_id
+from bypassfast import (
+    APIError,
+    PerimeterxCookie,
+    RetryPolicy,
+    ValidationError,
+    akamai_script_id,
+    script_id,
+)
 from bypassfast._memory import ScriptMemory
 
 from .support import FakeAPI, Recorded, error, keys, make_client, reply
@@ -36,8 +43,8 @@ def b64(data: bytes) -> str:
 # -- Akamai sensor ---------------------------------------------------------------
 
 
-def test_akamai_sensor_script_reuse_and_cache_miss_fallback() -> None:
-    api = FakeAPI(SENSOR_OK, CACHE_MISS, SENSOR_OK)
+def test_akamai_sensor_travels_hash_first_and_uploads_once() -> None:
+    api = FakeAPI(CACHE_MISS, SENSOR_OK, SENSOR_OK)
     client = make_client(api, compression_threshold=-1)
     script = b"raw <sensor> javascript"
     request: dict[str, Any] = {
@@ -51,15 +58,17 @@ def test_akamai_sensor_script_reuse_and_cache_miss_fallback() -> None:
 
     assert first.sensor_data == "sensor"
     assert first.script_id == "server-id"
-    assert second.response.attempts == 2
-    script_id = hashlib.sha256(script).hexdigest()
-    full, compact, fallback = api.bodies
-    assert (full["script"], full["script_id"]) == (b64(script), script_id)
+    assert first.response.attempts == 2
+    assert second.response.attempts == 1
+    digest = hashlib.sha256(script).hexdigest()
+    compact, upload, again = api.bodies
     assert "script" not in compact
-    assert compact["script_id"] == script_id
-    assert (fallback["script"], fallback["script_id"]) == (b64(script), script_id)
+    assert compact["script_id"] == digest
+    assert (upload["script"], upload["script_id"]) == (b64(script), digest)
+    assert "script" not in again
+    assert again["script_id"] == digest
     assert all("config" not in body for body in api.bodies)
-    assert keys(full) == [
+    assert keys(upload) == [
         "mode",
         "url",
         "ua",
@@ -84,6 +93,15 @@ def test_akamai_explicit_script_id_tries_the_remote_cache_first() -> None:
     assert "script" not in compact
     assert compact["script_id"] == akamai_script_id(script)
     assert fallback["script"] == b64(script)
+
+
+def test_akamai_script_id_alone_returns_the_miss() -> None:
+    api = FakeAPI(CACHE_MISS)
+    client = make_client(api)
+    with pytest.raises(APIError) as excinfo:
+        client.akamai.sensor(script_id=script_id(b"not at hand"))
+    assert excinfo.value.code == "script_cache_miss"
+    assert len(api.calls) == 1
 
 
 def test_akamai_failed_fallback_counts_both_exchanges() -> None:
@@ -113,7 +131,7 @@ def test_akamai_script_id_validation() -> None:
         client.akamai.sensor(script=b"script", script_id="0" * 64)
     assert (excinfo.value.field, excinfo.value.message) == (
         "script_id",
-        "does not match script bytes",
+        "does not match the script bytes",
     )
     for bad in ("abc", "g" * 64, "0" * 63, " " + "0" * 63):
         with pytest.raises(ValidationError, match="64-character SHA-256 hex digest"):
@@ -134,11 +152,12 @@ def test_akamai_session_drops_script_and_script_id() -> None:
 
 
 def test_akamai_text_script_is_utf8_and_matches_the_helper() -> None:
-    api = FakeAPI(SENSOR_OK)
+    api = FakeAPI(CACHE_MISS, SENSOR_OK)
     make_client(api).akamai.sensor(script="var é = 1;")
-    assert api.bodies[0]["script"] == b64("var é = 1;".encode())
-    assert akamai_script_id("var é = 1;") == akamai_script_id("var é = 1;".encode())
-    assert akamai_script_id(b"") == hashlib.sha256(b"").hexdigest()
+    assert api.bodies[0]["script_id"] == script_id("var é = 1;")
+    assert api.bodies[1]["script"] == b64("var é = 1;".encode())
+    assert akamai_script_id("var é = 1;") == script_id("var é = 1;".encode())
+    assert script_id(b"") == hashlib.sha256(b"").hexdigest()
 
 
 def test_akamai_sensor_full_wire_order() -> None:
@@ -153,6 +172,7 @@ def test_akamai_sensor_full_wire_order() -> None:
         accept_language="en",
         language="en-US",
         timezone="UTC",
+        telemetry=True,
     )
     assert keys(api.bodies[0]) == [
         "mode",
@@ -160,12 +180,12 @@ def test_akamai_sensor_full_wire_order() -> None:
         "ua",
         "abck",
         "bm_sz",
-        "script",
         "script_id",
         "script_url",
         "accept_language",
         "language",
         "timezone",
+        "telemetry",
     ]
 
 
@@ -178,11 +198,34 @@ def test_akamai_sensor_sends_pace_only_when_set() -> None:
     assert api.bodies[1]["pace"] is True
 
 
+def test_akamai_telemetry_and_client_hints_are_read() -> None:
+    api = FakeAPI(
+        reply(
+            200,
+            {
+                "success": True,
+                "sensor_data": "sensor",
+                "telemetry": "a=&&&e=bm&&&sensor_data=c2Vuc29y",
+                "client_hints": {"sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"'},
+                "paced_ms": 1200,
+            },
+        )
+    )
+    result = make_client(api).akamai.sensor(session="s", telemetry=True)
+    assert api.bodies[0]["telemetry"] is True
+    assert result.telemetry == "a=&&&e=bm&&&sensor_data=c2Vuc29y"
+    assert result.client_hints == {"sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"'}
+    assert result.paced_ms == 1200
+    plain = make_client(FakeAPI(SENSOR_OK)).akamai.sensor(session="s")
+    assert (plain.telemetry, plain.client_hints, plain.paced_ms) == ("", {}, 0)
+
+
 # -- Akamai SBSD, CPT, SecCPT ------------------------------------------------------
 
 
 def test_akamai_sbsd_wire() -> None:
     api = FakeAPI(
+        CACHE_MISS,
         reply(
             200,
             {
@@ -193,24 +236,23 @@ def test_akamai_sbsd_wire() -> None:
                 "wait_ms": 750,
                 "session": "s1",
                 "script_id": "id",
+                "client_hints": {"sec-ch-ua-mobile": "?0"},
             },
-        )
+        ),
     )
     client = make_client(api)
     result = client.akamai.sbsd(
         script=b"sbsd",
         sbsd_o="cookie",
-        script_id="  ABCDEF ",
         pace=True,
         sbsd_post="telemetry",
         resource_urls=["https://www.example.com/r.js"],
     )
-    body = api.bodies[0]
-    assert keys(body) == [
+    compact, upload = api.bodies
+    assert keys(compact) == [
         "mode",
         "url",
         "ua",
-        "script",
         "script_id",
         "sbsd_post",
         "pace",
@@ -218,26 +260,35 @@ def test_akamai_sbsd_wire() -> None:
         "sbsd_o",
         "resource_urls",
     ]
-    assert body["mode"] == "sbsd"
-    assert body["script"] == b64(b"sbsd")
-    assert body["script_id"] == "abcdef"
-    assert (body["url"], body["ua"], body["script_url"]) == ("", "", "")
+    assert compact["mode"] == "sbsd"
+    assert compact["script_id"] == script_id(b"sbsd")
+    assert (compact["url"], compact["ua"], compact["script_url"]) == ("", "", "")
+    assert upload["script"] == b64(b"sbsd")
+    assert keys(upload)[3:5] == ["script", "script_id"]
+    assert result.response.attempts == 2
     assert (result.body, result.sbsd_post, result.ind, result.wait_ms) == (
         "encrypted",
         "telemetry",
         1,
         750,
     )
+    assert result.client_hints == {"sec-ch-ua-mobile": "?0"}
 
 
 def test_akamai_sbsd_accepts_script_id_alone_and_requires_one() -> None:
     api = FakeAPI(reply(200, {"success": True}))
     client = make_client(api)
-    client.akamai.sbsd(script_id="cached", session="s")
+    cached = script_id(b"earlier")
+    client.akamai.sbsd(script_id="  " + cached.upper() + "  ", session="s")
     assert "script" not in api.bodies[0]
+    assert api.bodies[0]["script_id"] == cached
     with pytest.raises(ValidationError) as excinfo:
         client.akamai.sbsd(script_id="   ")
     assert excinfo.value.field == "script"
+    with pytest.raises(ValidationError, match="64-character"):
+        client.akamai.sbsd(script_id="cached")
+    with pytest.raises(ValidationError, match="does not match"):
+        client.akamai.sbsd(script=b"sbsd", script_id=cached)
     assert len(api.calls) == 1
 
 
@@ -278,10 +329,12 @@ def test_kasada_sensor_wire_and_response() -> None:
                 "cost": 0.002,
                 "payload": "p",
                 "headers": {"x-kpsdk-ct": "ct", "x-kpsdk-v": "v"},
+                "client_hints": {"sec-ch-ua": '"Chromium";v="155"'},
                 "warnings": ["w"],
                 "device_id": "d",
                 "session": "s",
                 "user_agent": "ua-out",
+                "script_id": "srv",
                 "cache_hit": True,
                 "duration_ms": 41,
             },
@@ -298,11 +351,28 @@ def test_kasada_sensor_wire_and_response() -> None:
         headers={"accept-language": "en-US"},
     )
     body = api.bodies[0]
-    assert keys(body) == ["mode", "script", "ua", "page_origin", "seed", "headers"]
-    assert body["script"] == "p.js source"
+    assert keys(body) == ["mode", "script_id", "ua", "page_origin", "seed", "headers"]
+    assert body["script_id"] == script_id(b"p.js source")
     assert b'"seed":18446744073709551615' in api.calls[0].raw
     assert result.headers == {"x-kpsdk-ct": "ct", "x-kpsdk-v": "v"}
+    assert result.client_hints == {"sec-ch-ua": '"Chromium";v="155"'}
+    assert result.script_id == "srv"
     assert (result.cache_hit, result.duration_ms, result.warnings) == (True, 41, ["w"])
+
+
+def test_kasada_sensor_uploads_once_and_cd_reuses_the_registration() -> None:
+    api = FakeAPI(reply(409, {"error": "script_cache_miss"}), reply(200, {"payload": "p"}))
+    client = make_client(api)
+    source = "raw p.js"
+    sensor = client.kasada.sensor(script=source, ua="ua")
+    cd = client.kasada.cd(script=source, work_time=250)
+    assert sensor.response.attempts == 2
+    assert sensor.script_id == script_id(source)
+    assert cd.response.attempts == 1
+    assert cd.script_id == script_id(source)
+    assert [body.get("script") for body in api.bodies] == [None, source, None]
+    assert {body["script_id"] for body in api.bodies} == {script_id(source)}
+    assert api.bodies[2]["mode"] == "cd"
 
 
 @pytest.mark.parametrize("seed", [-1, 2**64, True, 1.5, "7"])
@@ -321,7 +391,6 @@ def test_kasada_cd_always_fields() -> None:
     client.kasada.cd(work_time=250, subchallenge_count=2, is_mobile=True, duration=1.25)
     assert api.bodies[0] == {
         "mode": "cd",
-        "script": "",
         "st": 0,
         "ct": "",
         "domain": "",
@@ -351,9 +420,9 @@ def test_unknown_keyword_arguments_are_rejected() -> None:
 # -- Incapsula ---------------------------------------------------------------------
 
 
-def test_incapsula_script_reuse_and_fallback() -> None:
+def test_incapsula_hash_first_and_fallback() -> None:
     ok = reply(200, {"payload": "payload", "backend": "replay", "duration_ms": 2})
-    api = FakeAPI(ok, reply(409, {"error": "script_cache_miss"}), ok)
+    api = FakeAPI(reply(409, {"error": "script_cache_miss"}), ok, ok)
     client = make_client(api, compression_threshold=-1)
     request: dict[str, Any] = {
         "script": "raw script",
@@ -364,38 +433,45 @@ def test_incapsula_script_reuse_and_fallback() -> None:
         "document_script_source_groups": [["https://www.example.com/static/build"]],
     }
 
-    client.incapsula.reese84(**request)
+    first = client.incapsula.reese84(**request)
     result = client.incapsula.reese84(**request)
 
-    assert result.response.attempts == 2
-    assert [body.get("script") for body in api.bodies] == ["raw script", None, "raw script"]
+    assert first.response.attempts == 2
+    assert first.script_id == script_id("raw script")
+    assert result.response.attempts == 1
+    assert [body.get("script") for body in api.bodies] == [None, "raw script", None]
     for body in api.bodies:
         assert body["mode"] == "reese84"
+        assert body["script_id"] == script_id("raw script")
         assert body["document_script_source_groups"] == [["https://www.example.com/static/build"]]
         assert body["document_html"]
 
 
-def test_incapsula_cache_is_keyed_by_mode_url_and_content() -> None:
-    api = FakeAPI(reply(200, {"payload": "p"}))
+def test_incapsula_recent_miss_sends_the_script_directly() -> None:
+    api = FakeAPI(reply(409, {"error": "script_cache_miss"}), reply(200, {"payload": "p"}))
     client = make_client(api)
     base: dict[str, Any] = {"script_url": "https://www.example.com/a", "ua": "ua"}
-    client.incapsula.reese84(script="one", **base)
-    client.incapsula.reese84(script="one", **base)  # compact
-    client.incapsula.reese84(script="two", **base)  # changed bytes: full
-    client.incapsula.utmvc(script="two", **base)  # other mode: full
-    client.incapsula.reese84(script="two", script_url="https://www.example.com/b", ua="ua")
-    client.incapsula.reese84(script="two", **base)  # compact again
+    client.incapsula.reese84(script="one", **base)  # miss, then upload
+    client.incapsula.reese84(script="one", **base)  # registered: compact again
+    client.incapsula.utmvc(script="one", **base)  # other mode: compact
+    client.incapsula.reese84(script="two", **base)  # other content: compact
     sent = ["script" in body for body in api.bodies]
-    assert sent == [True, False, True, True, True, False]
+    assert sent == [False, True, False, False, False]
+    assert len(client._core.scripts) == 0
 
 
-def test_incapsula_no_fallback_for_other_errors_or_full_sends() -> None:
+def test_incapsula_misses_without_a_script_are_returned() -> None:
     api = FakeAPI(reply(409, {"error": "script_cache_miss"}))
     client = make_client(api)
     with pytest.raises(APIError) as excinfo:
         client.incapsula.reese84(script="s", script_url="https://www.example.com/x")
+    assert excinfo.value.response.attempts == 2  # hash-first, then the upload
+    assert len(api.calls) == 2
+    with pytest.raises(APIError) as excinfo:
+        client.incapsula.reese84(script_id=script_id("s"), script_url="https://www.example.com/x")
     assert excinfo.value.response.attempts == 1
-    assert len(api.calls) == 1
+    assert len(api.calls) == 3
+    assert client._core.scripts.recently_missed("incapsula:reese84:" + script_id("s"))
 
 
 def test_incapsula_utmvc_wire() -> None:
@@ -407,6 +483,8 @@ def test_incapsula_utmvc_wire() -> None:
                 "cookie": "c",
                 "cookie_name": "___utmvc",
                 "submit_path": "/_Incapsula_Resource?SWKMTFSR=1",
+                "script_id": "srv",
+                "client_hints": {"sec-ch-ua-platform": '"macOS"'},
             },
         )
     )
@@ -419,12 +497,13 @@ def test_incapsula_utmvc_wire() -> None:
         headers={"cookie": "visid=1"},
     )
     body = api.bodies[0]
-    assert keys(body) == ["mode", "script", "ua", "script_url", "url", "headers", "session_ids"]
+    assert keys(body) == ["mode", "script_id", "ua", "script_url", "url", "headers", "session_ids"]
     assert body["session_ids"] == ["s1"]
     assert (result.cookie_name, result.submit_path) == (
         "___utmvc",
         "/_Incapsula_Resource?SWKMTFSR=1",
     )
+    assert (result.script_id, result.client_hints) == ("srv", {"sec-ch-ua-platform": '"macOS"'})
 
 
 # -- PerimeterX --------------------------------------------------------------------
@@ -647,33 +726,47 @@ def test_perimeterx_allows_two_mib_block_pages() -> None:
 # -- script memory -------------------------------------------------------------------
 
 
-def test_script_memory_lru_semantics() -> None:
-    memory = ScriptMemory(2)
-    memory.put("a", "1")
-    memory.put("b", "2")
-    assert memory.matches("a", "1")  # "a" becomes most recent
-    memory.put("c", "3")  # evicts "b"
-    assert "b" not in memory
-    assert memory.matches("a", "1")
-    assert memory.matches("c", "3")
-    assert not memory.matches("a", "other")
-    assert not memory.matches("a", "")
-    assert not memory.matches("missing", "1")
-    memory.put("a", "9")  # replace keeps the size
+def test_script_memory_remembers_misses_briefly() -> None:
+    now = 1000.0
+    memory = ScriptMemory(2, lambda: now, ttl=60.0)
+    memory.mark_missed("a")
+    memory.mark_missed("b")
+    assert memory.recently_missed("a")
+    assert memory.recently_missed("b")
+    memory.mark_missed("c")  # evicts the oldest miss, "a"
+    assert "a" not in memory
     assert len(memory) == 2
-    assert memory.matches("a", "9")
-    memory.put("", "x")
-    memory.put("x", "")
-    assert len(memory) == 2
+    memory.mark_registered("b")
+    assert not memory.recently_missed("b")
+    now += 60.0
+    assert not memory.recently_missed("c")
+    assert len(memory) == 0
+    memory.mark_missed("")
+    memory.mark_registered("")
+    assert not memory.recently_missed("")
+    assert len(memory) == 0
 
 
-def test_client_script_memory_evicts_after_256_scripts() -> None:
-    api = FakeAPI(reply(200, {"success": True}))
+def test_client_forgets_misses_after_256_scripts_and_after_a_minute() -> None:
+    api = FakeAPI(reply(409, {"error_code": "script_cache_miss"}))
     client = make_client(api)
+    clock = client._core.clock
     for index in range(257):
-        client.akamai.sensor(script=f"script-{index}".encode())
+        with pytest.raises(APIError):
+            client.akamai.sensor(script=f"script-{index}".encode())
     assert len(client._core.scripts) == 256
-    client.akamai.sensor(script=b"script-256")  # still remembered: compact
-    client.akamai.sensor(script=b"script-0")  # evicted: full script again
-    assert "script" not in api.bodies[-2]
-    assert "script" in api.bodies[-1]
+    before = len(api.calls)
+    with pytest.raises(APIError):
+        client.akamai.sensor(script=b"script-256")  # remembered: the script goes directly
+    # A direct upload that still misses is not repeated.
+    assert "script" in api.bodies[before]
+    assert len(api.calls) == before + 1
+    before = len(api.calls)
+    with pytest.raises(APIError):
+        client.akamai.sensor(script=b"script-0")  # evicted: hash-first again
+    assert "script" not in api.bodies[before]
+    clock.sleep(60.0)
+    before = len(api.calls)
+    with pytest.raises(APIError):
+        client.akamai.sensor(script=b"script-256")  # expired: hash-first again
+    assert "script" not in api.bodies[before]

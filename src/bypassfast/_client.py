@@ -128,10 +128,11 @@ class Client:
 
     def _run(self, call: Call[T]) -> T:
         core = self._core
+        wire, with_script = core.first_wire(call)
         try:
-            meta, payload = self._exchange(core.prepare(call, call.wire))
+            meta, payload = self._exchange(core.prepare(call, wire))
         except APIError as err:
-            wire = call.fallback(err) if call.fallback is not None else None
+            wire = core.script_retry(call, err, with_script)
             if wire is None:
                 raise
             # The remote script cache missed: resend with the full script in
@@ -143,6 +144,8 @@ class Client:
                 merge_fallback_attempts(fallback_err, prior)
                 raise
             meta.attempts += prior
+            with_script = True
+        core.script_registered(call, with_script)
         return core.finish(call, meta, payload)
 
     def _exchange(self, prepared: Prepared) -> tuple[ResponseMeta, bytes]:

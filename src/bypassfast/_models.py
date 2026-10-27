@@ -65,13 +65,16 @@ class AkamaiSensorRequest(TypedDict, total=False):
     """Akamai Bot Manager ``sensor_data`` generation (mode ``sensor``).
 
     ``script`` is the raw JavaScript (bytes, or text encoded as UTF-8); the SDK
-    base64-encodes it. After one successful script-bearing call the client
-    sends the compact ``script_id`` for the same bytes and resends the script
-    automatically on a remote cache miss. With ``session`` set, ``script`` and
-    ``script_id`` are not sent. Set ``pace`` on the calls after the first to
-    have each response held until a person's interval (2.5-4 s) has passed
-    since the previous sensor: a page posts seconds apart, and sites score
-    sessions whose sensors arrive a fraction of a second apart.
+    base64-encodes it, sends only its SHA-256 as ``script_id`` and uploads the
+    bytes once, only when the API has never seen that script. ``script_id``
+    may be given instead of ``script`` when the bytes are not at hand. With
+    ``session`` set, neither is sent. Set ``pace`` on the calls after the
+    first to have each response held until a person's interval (2.5-4 s) has
+    passed since the previous sensor: a page posts seconds apart, and sites
+    score sessions whose sensors arrive a fraction of a second apart. Set
+    ``telemetry`` when the site protects its API calls with an
+    ``Akamai-BM-Telemetry`` header instead of a sensor post: the response then
+    carries the ready-to-send header value.
     """
 
     url: str
@@ -86,14 +89,16 @@ class AkamaiSensorRequest(TypedDict, total=False):
     timezone: str
     session: str
     pace: bool
+    telemetry: bool
 
 
 class AkamaiSBSDRequest(TypedDict, total=False):
     """Akamai SBSD side-band payload (mode ``sbsd``).
 
-    Keep the ``session`` from the first response and send it on every later
-    SBSD (or sensor) call for that page. Later calls may send ``script_id``
-    (also returned) instead of ``script``. ``sbsd_post="telemetry"`` asks for
+    ``script`` travels as its SHA-256 and is uploaded once on a cache miss, as
+    for the sensor. Keep the ``session`` from the first response and send it
+    on every later SBSD (or sensor) call for that page. Later calls may send
+    ``script_id`` (also returned) instead of ``script``. ``sbsd_post="telemetry"`` asks for
     the page's next telemetry post; wait ``wait_ms`` before posting it, or set
     ``pace`` to have the response held until then.
     """
@@ -140,9 +145,12 @@ class AkamaiSecCPTRequest(TypedDict, total=False):
 
 class KasadaSensorRequest(TypedDict, total=False):
     """Kasada sensor (mode ``sensor``). ``script`` is the raw ``p.js`` source;
-    unlike Akamai it is not base64-encoded and is never cached."""
+    unlike Akamai it is not base64-encoded. It travels as its SHA-256
+    (``script_id``) and is uploaded once, only when the API has never seen
+    it; ``script_id`` may be given instead when the source is not at hand."""
 
     script: Union[str, bytes]
+    script_id: str
     ua: str
     session: str
     script_url: str
@@ -166,9 +174,11 @@ class KasadaSensorRequest(TypedDict, total=False):
 
 
 class KasadaCDRequest(TypedDict, total=False):
-    """Kasada CD proof of work (mode ``cd``)."""
+    """Kasada CD proof of work (mode ``cd``). ``script`` is the same ``p.js``
+    as the sensor call and travels as its ``script_id``."""
 
     script: Union[str, bytes]
+    script_id: str
     st: int
     ct: str
     domain: str
@@ -190,13 +200,15 @@ class KasadaCDRequest(TypedDict, total=False):
 class IncapsulaReese84Request(TypedDict, total=False):
     """Incapsula Reese84 sensor (mode ``reese84``).
 
-    ``script`` is raw JavaScript. After a successful call the client omits it
-    for the same content at the same ``script_url`` and resends it
-    automatically on a remote cache miss. ``document_html`` is the challenged
-    page body; ``document_script_source_groups`` is its pre-extracted form.
+    ``script`` is raw JavaScript. It travels as its SHA-256 (``script_id``)
+    and is uploaded once, only when the API has never seen it; ``script_id``
+    may be given instead when the source is not at hand. ``document_html`` is
+    the challenged page body; ``document_script_source_groups`` is its
+    pre-extracted form.
     """
 
     script: Union[str, bytes]
+    script_id: str
     ua: str
     script_url: str
     url: str
@@ -211,10 +223,11 @@ class IncapsulaReese84Request(TypedDict, total=False):
 
 
 class IncapsulaUTMVCRequest(TypedDict, total=False):
-    """Incapsula ``___utmvc`` cookie workflow (mode ``utmvc``); same script
-    caching as :class:`IncapsulaReese84Request`."""
+    """Incapsula ``___utmvc`` cookie workflow (mode ``utmvc``); the script
+    travels as its ``script_id`` as for :class:`IncapsulaReese84Request`."""
 
     script: Union[str, bytes]
+    script_id: str
     ua: str
     script_url: str
     url: str
@@ -396,8 +409,12 @@ def _object(data: Mapping[str, Any], key: str) -> dict[str, Any] | None:
 @dataclass
 class AkamaiSensorResponse:
     """``sensor_data`` plus the exact client identity (``ua``, ``language``)
-    to use for the target exchange. ``script_id`` lets later calls skip the
-    script upload."""
+    to use for the target exchange. ``client_hints`` are the UA client hints
+    of the device: send ``sec-ch-ua``, ``sec-ch-ua-mobile`` and
+    ``sec-ch-ua-platform`` on every request, and the others only to sites
+    whose ``Accept-CH`` header asks for them. ``telemetry`` is the
+    ``Akamai-BM-Telemetry`` header value when the request asked for it;
+    ``paced_ms`` how long a paced response was held."""
 
     cost: float = 0.0
     success: bool = False
@@ -406,6 +423,9 @@ class AkamaiSensorResponse:
     session: str = ""
     language: str = ""
     script_id: str = ""
+    client_hints: dict[str, str] = field(default_factory=dict)
+    telemetry: str = ""
+    paced_ms: int = 0
     response: ResponseMeta = field(default_factory=ResponseMeta)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -419,6 +439,9 @@ class AkamaiSensorResponse:
             session=_str(data, "session"),
             language=_str(data, "language"),
             script_id=_str(data, "script_id"),
+            client_hints=_str_map(data, "client_hints"),
+            telemetry=_str(data, "telemetry"),
+            paced_ms=_int(data, "paced_ms"),
             response=meta,
             raw=data,
         )
@@ -436,6 +459,7 @@ class AkamaiSBSDResponse:
     body: str = ""
     session: str = ""
     script_id: str = ""
+    client_hints: dict[str, str] = field(default_factory=dict)
     sbsd_post: str = ""
     ind: int = 0
     wait_ms: int = 0
@@ -450,6 +474,7 @@ class AkamaiSBSDResponse:
             body=_str(data, "body"),
             session=_str(data, "session"),
             script_id=_str(data, "script_id"),
+            client_hints=_str_map(data, "client_hints"),
             sbsd_post=_str(data, "sbsd_post"),
             ind=_int(data, "ind"),
             wait_ms=_int(data, "wait_ms"),
@@ -506,15 +531,21 @@ class AkamaiSecCPTResponse:
 @dataclass
 class KasadaSensorResponse:
     """The encrypted ``payload`` for ``/tms`` plus the ``headers`` and
-    ``user_agent`` to send with it. Attach every returned header."""
+    ``user_agent`` to send with it. Attach every returned header; send the
+    low-entropy ``client_hints`` (``sec-ch-ua``, ``sec-ch-ua-mobile``,
+    ``sec-ch-ua-platform``) on every request and the others only to sites
+    whose ``Accept-CH`` header asks for them. ``script_id`` is the digest of
+    the ``p.js`` the solve used."""
 
     cost: float = 0.0
     payload: str = ""
     headers: dict[str, str] = field(default_factory=dict)
+    client_hints: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     device_id: str = ""
     session: str = ""
     user_agent: str = ""
+    script_id: str = ""
     cache_hit: bool = False
     duration_ms: int = 0
     response: ResponseMeta = field(default_factory=ResponseMeta)
@@ -526,10 +557,12 @@ class KasadaSensorResponse:
             cost=_float(data, "cost"),
             payload=_str(data, "payload"),
             headers=_str_map(data, "headers"),
+            client_hints=_str_map(data, "client_hints"),
             warnings=_str_list(data, "warnings"),
             device_id=_str(data, "device_id"),
             session=_str(data, "session"),
             user_agent=_str(data, "user_agent"),
+            script_id=_str(data, "script_id"),
             cache_hit=_bool(data, "cache_hit"),
             duration_ms=_int(data, "duration_ms"),
             response=meta,
@@ -539,10 +572,12 @@ class KasadaSensorResponse:
 
 @dataclass
 class KasadaCDResponse:
-    """``payload`` is the JSON string to send as ``x-kpsdk-cd``."""
+    """``payload`` is the JSON string to send as ``x-kpsdk-cd``; ``script_id``
+    the digest of the ``p.js`` the proof used."""
 
     cost: float = 0.0
     payload: str = ""
+    script_id: str = ""
     duration_ms: int = 0
     response: ResponseMeta = field(default_factory=ResponseMeta)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -552,6 +587,7 @@ class KasadaCDResponse:
         return cls(
             cost=_float(data, "cost"),
             payload=_str(data, "payload"),
+            script_id=_str(data, "script_id"),
             duration_ms=_int(data, "duration_ms"),
             response=meta,
             raw=data,
@@ -561,13 +597,18 @@ class KasadaCDResponse:
 @dataclass
 class IncapsulaResponse:
     """Shared by Reese84 and UTMVC. UTMVC fills ``cookie``, ``cookie_name`` and
-    ``submit_path``; Reese84 fills ``device_id`` and ``session``."""
+    ``submit_path``; Reese84 fills ``device_id`` and ``session``. ``script_id``
+    is the digest of the script the solve used; ``client_hints`` the device's
+    UA client hints (send the low-entropy ones on every request, the others
+    only to sites whose ``Accept-CH`` header asks for them)."""
 
     cost: float = 0.0
     payload: str = ""
     backend: str = ""
     device_id: str = ""
     session: str = ""
+    script_id: str = ""
+    client_hints: dict[str, str] = field(default_factory=dict)
     duration_ms: int = 0
     cookie: str = ""
     cookie_name: str = ""
@@ -583,6 +624,8 @@ class IncapsulaResponse:
             backend=_str(data, "backend"),
             device_id=_str(data, "device_id"),
             session=_str(data, "session"),
+            script_id=_str(data, "script_id"),
+            client_hints=_str_map(data, "client_hints"),
             duration_ms=_int(data, "duration_ms"),
             cookie=_str(data, "cookie"),
             cookie_name=_str(data, "cookie_name"),
@@ -649,6 +692,7 @@ class PerimeterxResponse:
     ua: str = ""
     accept_language: str = ""
     platform: str = ""
+    client_hints: dict[str, str] = field(default_factory=dict)
     cost: float = 0.0
     response: ResponseMeta = field(default_factory=ResponseMeta)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -684,6 +728,7 @@ class PerimeterxResponse:
             ua=_str(data, "ua"),
             accept_language=_str(data, "accept_language"),
             platform=_str(data, "platform"),
+            client_hints=_str_map(data, "client_hints"),
             cost=_float(data, "cost"),
             response=meta,
             raw=data,

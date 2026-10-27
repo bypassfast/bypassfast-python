@@ -89,7 +89,9 @@ token = tl.headers["x-kpsdk-ct"]  # send on the protected request with solved.us
 Use `solved.user_agent` verbatim: the solver may adjust the minor version to
 match the device it used. Pass `session=solved.session` on the next solve in
 the same browser session. When the site issues a CD challenge,
-`client.kasada.cd(...)` returns the `x-kpsdk-cd` value in `payload`.
+`client.kasada.cd(...)` returns the `x-kpsdk-cd` value in `payload`. The
+`p.js` source travels as its SHA-256 (`script_id`) and is uploaded once, only
+when the API has never seen it (see [Script handling](#script-handling)).
 
 ## Akamai
 
@@ -119,15 +121,12 @@ one session, or pass `pace=True` on them and the API holds each
 continuation response until that interval has passed (never more than 6 s,
 never the first call).
 
-Script handling is automatic. After a script-bearing solve succeeds, the
-client remembers the script's SHA-256 (never the script) and later fresh
-sessions send only `script_id`. If the API's cache entry expired
-(`409 script_cache_miss`) or the cache is unavailable
-(`503 script_cache_unavailable`, retried first), the client resends the full
-script once; `response.attempts` counts both exchanges. In a new process, pass
-`script_id=bypassfast.akamai_script_id(script)` together with `script` to try
-the compact form first. Each client remembers up to 256 script hashes
-(shared with Incapsula), evicting the least recently used.
+Script handling is automatic (see [Script handling](#script-handling)): the
+script travels as its SHA-256 and is uploaded once, only when the API has
+never seen it; `response.attempts` counts both exchanges when that happens.
+For sites that protect their API calls with an `Akamai-BM-Telemetry` header
+instead of a sensor post, pass `telemetry=True` and the response carries the
+ready-to-send header value in `telemetry`.
 
 `client.akamai.sbsd(...)` takes the SBSD script (or `script_id` from an
 earlier response) and `sbsd_o`; keep the returned `session` for every later
@@ -161,11 +160,39 @@ result = client.incapsula.reese84(
 site.post(sensor_url, content=result.payload, headers={"Content-Type": "text/plain; charset=utf-8"})
 ```
 
-After a successful call the client omits `script` for the same content at the
-same mode and `script_url`, and resends it automatically on
-`409 script_cache_miss`. Changed bytes at the same URL are sent in full.
+The loader travels as its SHA-256 (`script_id`) and is uploaded once, only
+when the API has never seen it (see [Script handling](#script-handling));
+`script_url` still identifies the loader family.
 `client.incapsula.utmvc(..., session_ids=[...])` returns the `___utmvc`
 `cookie` and the `submit_path` to request next.
+
+## Script handling
+
+Every script-bearing call (`akamai.sensor`, `akamai.sbsd`, `kasada.sensor`,
+`kasada.cd`, `incapsula.reese84`, `incapsula.utmvc`) travels hash-first: the
+request carries the script's SHA-256 as `script_id` and no script. The API
+keeps every script it has been sent for days, so the body is only needed when
+nobody has sent that script yet; the API then answers `409 script_cache_miss`
+(not billed) and the SDK repeats the call once with the script. A new script
+version costs one extra round trip, once, fleet-wide: an Akamai sensor
+request is about 1 KB on the wire instead of hundreds of KB, a Kasada one
+about 1 KB instead of 700 KB. After a miss the client sends the script
+directly for a minute, so a burst of solves for a brand-new script uploads
+it once; `503 script_cache_unavailable` is retried first.
+
+Keep passing the script exactly as today. When it is not at hand, pass
+`script_id` instead (every script-bearing response returns it, and
+`bypassfast.script_id(raw)` computes it); a cache miss is then raised as the
+`APIError`. A script the API could never accept (over 1 MiB encoded) is
+refused locally as a `ValidationError` before any round trip.
+
+## Client hints
+
+Every solve returns `client_hints`: the UA client hints of the device the
+payload describes, as Chrome sends them. Send `sec-ch-ua`, `sec-ch-ua-mobile`
+and `sec-ch-ua-platform` on every request of the session, and the other
+hints (`sec-ch-ua-platform-version`, `sec-ch-ua-full-version-list`, ...)
+only to sites whose `Accept-CH` response header asks for them.
 
 ## PerimeterX / HUMAN
 

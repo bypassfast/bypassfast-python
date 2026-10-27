@@ -37,7 +37,9 @@ async def test_kasada_sensor_headers_gzip_and_meta() -> None:
         )
     )
     async with make_async_client(api, user_agent="worker/2") as client:
-        result = await client.kasada.sensor(script="var x = 1;" * 200, ua="ua")
+        result = await client.kasada.sensor(
+            script="var x = 1;", ua="ua", referrer="https://www.example.com/" + "p/" * 600
+        )
 
     (call,) = api.calls
     assert call.headers["X-API-Key"] == API_KEY
@@ -50,18 +52,19 @@ async def test_kasada_sensor_headers_gzip_and_meta() -> None:
     assert (result.response.request_id, result.response.attempts) == ("req-a", 1)
 
 
-async def test_akamai_compact_flow_and_fallback() -> None:
+async def test_akamai_hash_first_flow_and_fallback() -> None:
     ok = reply(200, {"success": True, "sensor_data": "sensor"})
-    api = FakeAPI(ok, reply(409, {"error_code": "script_cache_miss"}), ok)
+    api = FakeAPI(reply(409, {"error_code": "script_cache_miss"}), ok, ok)
     client = make_async_client(api, compression_threshold=-1)
     script = b"raw script"
 
-    await client.akamai.sensor(script=script)
+    first = await client.akamai.sensor(script=script)
     second = await client.akamai.sensor(script=script)
 
-    assert second.response.attempts == 2
+    assert first.response.attempts == 2
+    assert second.response.attempts == 1
     assert second.script_id == hashlib.sha256(script).hexdigest()
-    assert ["script" in body for body in api.bodies] == [True, False, True]
+    assert ["script" in body for body in api.bodies] == [False, True, False]
 
 
 async def test_akamai_explicit_script_id_validation() -> None:
@@ -70,9 +73,9 @@ async def test_akamai_explicit_script_id_validation() -> None:
         await client.akamai.sensor(script=b"a", script_id=akamai_script_id(b"b"))
 
 
-async def test_incapsula_cache_flow_and_fallback() -> None:
+async def test_incapsula_hash_first_flow_and_fallback() -> None:
     ok = reply(200, {"payload": "p", "backend": "replay"})
-    api = FakeAPI(ok, reply(409, {"error": "script_cache_miss"}), ok)
+    api = FakeAPI(reply(409, {"error": "script_cache_miss"}), ok, ok)
     client = make_async_client(api)
     request: dict[str, Any] = {
         "script": "raw script",
@@ -80,11 +83,13 @@ async def test_incapsula_cache_flow_and_fallback() -> None:
         "ua": "ua",
     }
 
-    await client.incapsula.reese84(**request)
+    first = await client.incapsula.reese84(**request)
     result = await client.incapsula.reese84(**request)
 
-    assert result.response.attempts == 2
-    assert [body.get("script") for body in api.bodies] == ["raw script", None, "raw script"]
+    assert first.response.attempts == 2
+    assert result.response.attempts == 1
+    assert [body.get("script") for body in api.bodies] == [None, "raw script", None]
+    assert {body["script_id"] for body in api.bodies} == {hashlib.sha256(b"raw script").hexdigest()}
 
 
 async def test_perimeterx_init_hold_and_validation() -> None:
@@ -185,7 +190,7 @@ async def test_response_errors_and_limits() -> None:
     with pytest.raises(bypassfast.ResponseError):
         await make_async_client(FakeAPI(reply(200, "{broken"))).kasada.cd()
     with pytest.raises(ValidationError, match="1 MiB"):
-        await make_async_client(FakeAPI()).kasada.sensor(script="x" * (1024 * 1024))
+        await make_async_client(FakeAPI()).kasada.sensor(script="x" * (1024 * 1024 + 1))
 
 
 async def test_cancellation_interrupts_a_backoff() -> None:

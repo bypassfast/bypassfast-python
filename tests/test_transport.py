@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import os
 import threading
@@ -46,8 +47,13 @@ def test_headers_user_agent_gzip_request_and_response_meta() -> None:
     )
     client = make_client(api, user_agent="  checkout/1.0 ")
 
+    # The script travels as its hash; a long referrer makes the body worth
+    # compressing.
     result = client.kasada.sensor(
-        script="var challenge = 1;" * 200, ua="ua-in", accept_language="en-US"
+        script="var challenge = 1;",
+        ua="ua-in",
+        accept_language="en-US",
+        referrer="https://www.example.com/" + "path/" * 400,
     )
 
     (call,) = api.calls
@@ -86,7 +92,8 @@ def test_default_user_agent_and_compact_utf8_json() -> None:
     (call,) = api.calls
     assert call.headers["User-Agent"] == UA_PREFIX
     assert "Content-Encoding" not in call.headers
-    assert call.raw == '{"mode":"sensor","script":"é","ua":"ua"}'.encode()
+    digest = hashlib.sha256("é".encode()).hexdigest()
+    assert call.raw == f'{{"mode":"sensor","script_id":"{digest}","ua":"ua"}}'.encode()
 
 
 @pytest.mark.parametrize(
@@ -103,7 +110,7 @@ def test_compression_threshold(threshold: int, size: int, compressed: bool) -> N
     client = make_client(api, compression_threshold=threshold)
     overhead = len(encode_json({"mode": "sensor", "script": "", "ua": ""}))
 
-    client.kasada.sensor(script="a" * (size - overhead))
+    client.solve("kasada", {"mode": "sensor", "script": "a" * (size - overhead), "ua": ""})
 
     (call,) = api.calls
     assert (call.headers.get("Content-Encoding") == "gzip") is compressed
@@ -129,17 +136,32 @@ def test_one_mib_limit_is_local_and_exact() -> None:
     client = make_client(api, compression_threshold=-1)
     overhead = len(encode_json({"mode": "sensor", "script": "", "ua": ""}))
 
-    client.kasada.sensor(script="x" * (MIB - overhead))
+    client.solve("kasada", {"mode": "sensor", "script": "x" * (MIB - overhead), "ua": ""})
     assert len(api.calls[0].raw) == MIB
 
     with pytest.raises(bypassfast.ValidationError) as excinfo:
-        client.kasada.sensor(script="x" * (MIB - overhead + 1))
+        client.solve("kasada", {"mode": "sensor", "script": "x" * (MIB - overhead + 1), "ua": ""})
     assert excinfo.value.field == "request"
     assert (
         str(excinfo.value)
         == "bypassfast: invalid request: encoded JSON exceeds the 1 MiB API limit"
     )
     assert len(api.calls) == 1
+
+
+def test_oversized_script_is_refused_before_any_round_trip() -> None:
+    # Hash-first would send a tiny body; the script itself can never be
+    # uploaded, so the typed methods refuse it up front.
+    api = FakeAPI(reply(200, {}))
+    client = make_client(api, compression_threshold=-1)
+    with pytest.raises(bypassfast.ValidationError) as excinfo:
+        client.kasada.sensor(script="x" * (MIB + 1), ua="ua")
+    assert excinfo.value.field == "script"
+    assert "1 MiB" in str(excinfo.value)
+    with pytest.raises(bypassfast.ValidationError, match="1 MiB"):
+        # Akamai scripts grow by a third in base64.
+        client.akamai.sensor(script=b"x" * (MIB - 1000))
+    assert api.calls == []
 
 
 def test_generic_solve_limits_per_solver() -> None:
@@ -485,4 +507,4 @@ def test_constants_match_the_wire_contract() -> None:
     assert const.MAX_PERIMETERX_REQUEST_BYTES == 2_097_152
     assert const.MAX_RESPONSE_BYTES == 4_194_304
     assert const.DEFAULT_BASE_URL == "https://api.bypass.fast"
-    assert bypassfast.__version__ == "0.1.0"
+    assert bypassfast.__version__ == "0.2.0"

@@ -15,7 +15,7 @@ from ._async_client import (
     AsyncKasadaService,
     AsyncPerimeterxService,
 )
-from ._calls import akamai_script_id
+from ._calls import akamai_script_id, script_id
 from ._client import (
     AkamaiService,
     Client,
@@ -113,4 +113,5 @@ __all__ = [
     "__version__",
     "akamai_script_id",
     "is_error_code",
+    "script_id",
 ]

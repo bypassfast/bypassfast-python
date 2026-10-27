@@ -37,6 +37,9 @@ DEFAULT_TIMEOUT = 65.0
 DEFAULT_PERIMETERX_TIMEOUT = 155.0
 
 SCRIPT_MEMORY_CAPACITY = 256
+# Seconds a script_cache_miss is remembered, during which the client sends the
+# script body directly instead of hash-first.
+SCRIPT_MISS_MEMORY = 60.0
 
 SDK_USER_AGENT = "bypassfast-python/" + __version__
 

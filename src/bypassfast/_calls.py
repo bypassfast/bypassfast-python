@@ -12,11 +12,11 @@ import hashlib
 import re
 from collections.abc import Mapping, Sized
 from dataclasses import fields as dataclass_fields
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from . import _constants as const
 from ._core import Call, Core
-from ._errors import APIError, ResponseMeta, ValidationError
+from ._errors import ResponseMeta, ValidationError
 from ._models import (
     AkamaiCPTResponse,
     AkamaiSBSDResponse,
@@ -36,10 +36,10 @@ KASADA_PATH = "/v1/solve/kasada"
 INCAPSULA_PATH = "/v1/solve/incapsula"
 PERIMETERX_PATH = "/v1/solve/perimeterx"
 
-_SCRIPT_CACHE_CODES = ("script_cache_miss", "script_cache_unavailable")
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 _OMIT: Any = object()  # field spec marker: omit when empty
+T = TypeVar("T")
 
 
 def _empty(value: object) -> bool:
@@ -110,10 +110,61 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def akamai_script_id(raw: bytes | str) -> str:
-    """The ``script_id`` of raw Akamai JavaScript: the lower-case hex SHA-256
-    of its bytes (``str`` is encoded as UTF-8)."""
+def script_id(raw: bytes | str) -> str:
+    """The ``script_id`` of a raw challenge script: the lower-case hex SHA-256
+    of its bytes exactly as fetched (``str`` is encoded as UTF-8). The SDK
+    computes it for every script it sends; call it to persist an ID beside a
+    cached script."""
     return _sha256_hex(_raw_bytes(raw, "script"))
+
+
+def akamai_script_id(raw: bytes | str) -> str:
+    """:func:`script_id` under its original name."""
+    return script_id(raw)
+
+
+def _resolve_script_id(explicit: object, script: bytes) -> str:
+    """Reconcile an explicit ``script_id`` with the script bytes: the bytes
+    decide the ID, and an explicit ID that disagrees is a local validation
+    error (the API would answer ``400 script_id_mismatch``)."""
+    if explicit is None:
+        explicit = ""
+    if not isinstance(explicit, str):
+        raise ValidationError("script_id", "must be a string")
+    resolved = explicit.strip().lower()
+    if resolved and not _SHA256_HEX.fullmatch(resolved):
+        raise ValidationError("script_id", "must be a 64-character SHA-256 hex digest")
+    if script:
+        computed = _sha256_hex(script)
+        if resolved and resolved != computed:
+            raise ValidationError("script_id", "does not match the script bytes")
+        resolved = computed
+    return resolved
+
+
+def _script_call(
+    core: Core,
+    path: str,
+    key: str,
+    has_script: bool,
+    script_bytes: int,
+    build: Callable[[bool], dict[str, Any]],
+    finish: Callable[[dict[str, Any], ResponseMeta], T],
+) -> Call[T]:
+    """A script-bearing call: hash-first, with the one-time resend the client
+    performs when the API has never seen the script."""
+    return Call(
+        "POST",
+        path,
+        None,
+        const.MAX_REQUEST_BYTES,
+        core.timeout,
+        finish,
+        script_wire=build,
+        script_key=key,
+        has_script=has_script,
+        script_bytes=script_bytes,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -133,58 +184,43 @@ _AKAMAI_SENSOR = (
     ("timezone", _OMIT),
     ("session", _OMIT),
     ("pace", _OMIT),
+    ("telemetry", _OMIT),
 )
 
 
 def akamai_sensor(core: Core, request: Mapping[str, Any]) -> Call[AkamaiSensorResponse]:
     _check_keys(request, _AKAMAI_SENSOR, "akamai.sensor")
     script = _raw_bytes(request.get("script"), "script")
-    script_id = ""
-    full_script = ""
-    used_compact = False
-    if not request.get("session"):
+    if request.get("session"):
         # With a session the API pins the script itself; script and
         # script_id are not sent.
-        script_id = (request.get("script_id") or "").lower()
-        explicit = script_id != ""
-        if explicit and not _SHA256_HEX.fullmatch(script_id):
-            raise ValidationError("script_id", "must be a 64-character SHA-256 hex digest")
-        if script:
-            computed = _sha256_hex(script)
-            if explicit and script_id != computed:
-                raise ValidationError("script_id", "does not match script bytes")
-            script_id = computed
-            full_script = base64.b64encode(script).decode("ascii")
-        used_compact = bool(script) and (
-            explicit or core.scripts.matches("akamai:" + script_id, script_id)
+        wire: dict[str, Any] = {"mode": "sensor"}
+        _emit(wire, {**request, "script": "", "script_id": ""}, _AKAMAI_SENSOR)
+        return Call(
+            "POST",
+            AKAMAI_PATH,
+            wire,
+            const.MAX_REQUEST_BYTES,
+            core.timeout,
+            AkamaiSensorResponse._from_wire,
         )
-    def build(script_field: str) -> dict[str, Any]:
-        values = {**request, "script": script_field, "script_id": script_id}
+    resolved = _resolve_script_id(request.get("script_id"), script)
+    encoded = base64.b64encode(script).decode("ascii") if script else ""
+
+    def build(with_script: bool) -> dict[str, Any]:
+        values = {**request, "script": encoded if with_script else "", "script_id": resolved}
         wire: dict[str, Any] = {"mode": "sensor"}
         _emit(wire, values, _AKAMAI_SENSOR)
         return wire
 
-    def fallback(err: APIError) -> dict[str, Any] | None:
-        if err.code in _SCRIPT_CACHE_CODES:
-            return build(full_script)
-        return None
-
     def finish(data: dict[str, Any], meta: ResponseMeta) -> AkamaiSensorResponse:
         result = AkamaiSensorResponse._from_wire(data, meta)
         if not result.script_id:
-            result.script_id = script_id
-        if script_id:
-            core.scripts.put("akamai:" + script_id, script_id)
+            result.script_id = resolved
         return result
 
-    return Call(
-        "POST",
-        AKAMAI_PATH,
-        build("" if used_compact else full_script),
-        const.MAX_REQUEST_BYTES,
-        core.timeout,
-        finish,
-        fallback if used_compact else None,
+    return _script_call(
+        core, AKAMAI_PATH, "akamai:" + resolved, bool(script), len(encoded), build, finish
     )
 
 
@@ -210,23 +246,25 @@ _AKAMAI_SBSD = (
 def akamai_sbsd(core: Core, request: Mapping[str, Any]) -> Call[AkamaiSBSDResponse]:
     _check_keys(request, _AKAMAI_SBSD, "akamai.sbsd")
     script = _raw_bytes(request.get("script"), "script")
-    script_id = (request.get("script_id") or "").strip().lower()
-    if not script and not script_id:
+    resolved = _resolve_script_id(request.get("script_id"), script)
+    if not resolved:
         raise ValidationError("script", "set script, or script_id from an earlier response")
-    values = {
-        **request,
-        "script": base64.b64encode(script).decode("ascii"),
-        "script_id": script_id,
-    }
-    wire: dict[str, Any] = {"mode": "sbsd"}
-    _emit(wire, values, _AKAMAI_SBSD)
-    return Call(
-        "POST",
-        AKAMAI_PATH,
-        wire,
-        const.MAX_REQUEST_BYTES,
-        core.timeout,
-        AkamaiSBSDResponse._from_wire,
+    encoded = base64.b64encode(script).decode("ascii") if script else ""
+
+    def build(with_script: bool) -> dict[str, Any]:
+        values = {**request, "script": encoded if with_script else "", "script_id": resolved}
+        wire: dict[str, Any] = {"mode": "sbsd"}
+        _emit(wire, values, _AKAMAI_SBSD)
+        return wire
+
+    def finish(data: dict[str, Any], meta: ResponseMeta) -> AkamaiSBSDResponse:
+        result = AkamaiSBSDResponse._from_wire(data, meta)
+        if not result.script_id:
+            result.script_id = resolved
+        return result
+
+    return _script_call(
+        core, AKAMAI_PATH, "akamai:" + resolved, bool(script), len(encoded), build, finish
     )
 
 
@@ -276,7 +314,8 @@ def akamai_sec_cpt(core: Core, request: Mapping[str, Any]) -> Call[AkamaiSecCPTR
 # ---------------------------------------------------------------------------
 
 _KASADA_SENSOR = (
-    ("script", ""),
+    ("script", _OMIT),
+    ("script_id", _OMIT),
     ("ua", ""),
     ("session", _OMIT),
     ("script_url", _OMIT),
@@ -303,21 +342,30 @@ _KASADA_SENSOR = (
 def kasada_sensor(core: Core, request: Mapping[str, Any]) -> Call[KasadaSensorResponse]:
     _check_keys(request, _KASADA_SENSOR, "kasada.sensor")
     _check_uint64(request, "seed")
-    values = {**request, "script": _text(request.get("script"), "script")}
-    wire: dict[str, Any] = {"mode": "sensor"}
-    _emit(wire, values, _KASADA_SENSOR)
-    return Call(
-        "POST",
-        KASADA_PATH,
-        wire,
-        const.MAX_REQUEST_BYTES,
-        core.timeout,
-        KasadaSensorResponse._from_wire,
+    script = _text(request.get("script"), "script")
+    raw = script.encode("utf-8")
+    resolved = _resolve_script_id(request.get("script_id"), raw)
+
+    def build(with_script: bool) -> dict[str, Any]:
+        values = {**request, "script": script if with_script else "", "script_id": resolved}
+        wire: dict[str, Any] = {"mode": "sensor"}
+        _emit(wire, values, _KASADA_SENSOR)
+        return wire
+
+    def finish(data: dict[str, Any], meta: ResponseMeta) -> KasadaSensorResponse:
+        result = KasadaSensorResponse._from_wire(data, meta)
+        if not result.script_id:
+            result.script_id = resolved
+        return result
+
+    return _script_call(
+        core, KASADA_PATH, "kasada:" + resolved, bool(script), len(raw), build, finish
     )
 
 
 _KASADA_CD = (
-    ("script", ""),
+    ("script", _OMIT),
+    ("script_id", _OMIT),
     ("st", 0),
     ("ct", ""),
     ("domain", ""),
@@ -340,16 +388,24 @@ _KASADA_CD = (
 def kasada_cd(core: Core, request: Mapping[str, Any]) -> Call[KasadaCDResponse]:
     _check_keys(request, _KASADA_CD, "kasada.cd")
     _check_uint64(request, "seed")
-    values = {**request, "script": _text(request.get("script"), "script")}
-    wire: dict[str, Any] = {"mode": "cd"}
-    _emit(wire, values, _KASADA_CD)
-    return Call(
-        "POST",
-        KASADA_PATH,
-        wire,
-        const.MAX_REQUEST_BYTES,
-        core.timeout,
-        KasadaCDResponse._from_wire,
+    script = _text(request.get("script"), "script")
+    raw = script.encode("utf-8")
+    resolved = _resolve_script_id(request.get("script_id"), raw)
+
+    def build(with_script: bool) -> dict[str, Any]:
+        values = {**request, "script": script if with_script else "", "script_id": resolved}
+        wire: dict[str, Any] = {"mode": "cd"}
+        _emit(wire, values, _KASADA_CD)
+        return wire
+
+    def finish(data: dict[str, Any], meta: ResponseMeta) -> KasadaCDResponse:
+        result = KasadaCDResponse._from_wire(data, meta)
+        if not result.script_id:
+            result.script_id = resolved
+        return result
+
+    return _script_call(
+        core, KASADA_PATH, "kasada:" + resolved, bool(script), len(raw), build, finish
     )
 
 
@@ -359,6 +415,7 @@ def kasada_cd(core: Core, request: Mapping[str, Any]) -> Call[KasadaCDResponse]:
 
 _INCAPSULA_WIRE = (
     ("script", _OMIT),
+    ("script_id", _OMIT),
     ("ua", ""),
     ("script_url", ""),
     ("url", ""),
@@ -392,36 +449,29 @@ def incapsula_utmvc(core: Core, request: Mapping[str, Any]) -> Call[IncapsulaRes
 
 def _incapsula(core: Core, mode: str, request: Mapping[str, Any]) -> Call[IncapsulaResponse]:
     script = _text(request.get("script"), "script")
-    script_url = request.get("script_url") or ""
-    cache_key = f"incapsula:{mode}:{script_url}"
-    script_hash = _sha256_hex(script.encode("utf-8")) if script else ""
-    used_compact = bool(script_hash) and core.scripts.matches(cache_key, script_hash)
+    raw = script.encode("utf-8")
+    resolved = _resolve_script_id(request.get("script_id"), raw)
 
-    def build(include_script: bool) -> dict[str, Any]:
-        values = {**request, "script": script if include_script else ""}
+    def build(with_script: bool) -> dict[str, Any]:
+        values = {**request, "script": script if with_script else "", "script_id": resolved}
         wire: dict[str, Any] = {"mode": mode}
         _emit(wire, values, _INCAPSULA_WIRE)
         return wire
 
-    def fallback(err: APIError) -> dict[str, Any] | None:
-        if err.code in _SCRIPT_CACHE_CODES:
-            return build(True)
-        return None
-
     def finish(data: dict[str, Any], meta: ResponseMeta) -> IncapsulaResponse:
         result = IncapsulaResponse._from_wire(data, meta)
-        if script_hash:
-            core.scripts.put(cache_key, script_hash)
+        if not result.script_id:
+            result.script_id = resolved
         return result
 
-    return Call(
-        "POST",
+    return _script_call(
+        core,
         INCAPSULA_PATH,
-        build(not used_compact),
-        const.MAX_REQUEST_BYTES,
-        core.timeout,
+        f"incapsula:{mode}:{resolved}",
+        bool(script),
+        len(raw),
+        build,
         finish,
-        fallback if used_compact else None,
     )
 
 

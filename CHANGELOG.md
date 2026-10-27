@@ -3,8 +3,29 @@
 All notable changes to the `bypassfast` Python SDK are recorded here. The
 project follows [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.2.0 - 2026-10-27
 
+- Every script-bearing call travels hash-first. `akamai.sensor`, `akamai.sbsd`,
+  `kasada.sensor`, `kasada.cd`, `incapsula.reese84` and `incapsula.utmvc` send
+  the script's SHA-256 as `script_id` and no script; the API keeps every
+  script it has been sent, so the body is uploaded only when nobody has sent
+  that script yet (409 `script_cache_miss`, not billed), in one automatic
+  resend. An Akamai sensor request goes from hundreds of KB to about 1 KB on
+  the wire, a Kasada one from about 700 KB. After a miss the client sends the
+  script directly for a minute, so a burst of solves for a new script uploads
+  it once. `bypassfast.script_id()` computes the digest; `akamai_script_id()` remains.
+- Kasada and Incapsula requests accept `script_id` instead of `script`, and
+  every script-bearing response returns `script_id`.
+- Every solve returns `client_hints`, the UA client hints of the device the
+  payload describes. Send `sec-ch-ua`, `sec-ch-ua-mobile` and
+  `sec-ch-ua-platform` on every request, and the others only to sites whose
+  `Accept-CH` header asks for them.
+- Akamai: `telemetry=True` on `akamai.sensor` returns the `Akamai-BM-Telemetry`
+  header value in `AkamaiSensorResponse.telemetry`, for sites that protect
+  their API calls with that header instead of a sensor post.
+  `AkamaiSensorResponse.paced_ms` reports how long a paced response was held.
+- A script the API could never accept (over 1 MiB encoded) is refused locally
+  as a `ValidationError` on `script` before any round trip.
 - PerimeterX: `PerimeterxResponse.accept_language` is the Accept-Language the
   session runs as. Without `accept_language` in `init` the API draws a real
   Chrome value for the proxy exit's country; the SDK keeps your own value

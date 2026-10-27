@@ -300,13 +300,19 @@ def _check_seconds(name: str, value: object, *, allow_zero: bool) -> float:
 # ---------------------------------------------------------------------------
 
 
+SCRIPT_CACHE_CODES = ("script_cache_miss", "script_cache_unavailable")
+
+
 @dataclass
 class Call(Generic[T]):
     """One SDK operation: what to send, and how to build its typed result.
 
-    ``fallback`` maps a failed first exchange to a second wire body (the
-    script-cache fallback) or ``None``. ``finish`` turns the decoded JSON
-    object into the typed response and records script memory.
+    A script-bearing call sets ``script_wire``, which renders the body with or
+    without the script, ``script_key`` (its digest in the client's miss
+    memory), ``has_script`` (false when the caller supplied only a script_id)
+    and ``script_bytes`` (what the script adds to the body when sent). Every
+    other call sends ``wire`` as is. ``finish`` turns the decoded JSON object
+    into the typed response.
     """
 
     method: str
@@ -315,7 +321,10 @@ class Call(Generic[T]):
     limit: int
     timeout: float
     finish: Callable[[dict[str, Any], ResponseMeta], T]
-    fallback: Callable[[APIError], dict[str, Any] | None] | None = None
+    script_wire: Callable[[bool], dict[str, Any]] | None = None
+    script_key: str = ""
+    has_script: bool = False
+    script_bytes: int = 0
 
 
 class Prepared(NamedTuple):
@@ -516,9 +525,45 @@ class Core:
         self.perimeterx_timeout = _check_seconds(
             "perimeterx_timeout", perimeterx_timeout, allow_zero=False
         )
-        self.scripts = ScriptMemory(const.SCRIPT_MEMORY_CAPACITY)
         self.clock = Clock()
         self.jitter: Jitter = full_jitter
+        self.scripts = ScriptMemory(const.SCRIPT_MEMORY_CAPACITY, lambda: self.clock.monotonic())
+
+    # -- hash-first script exchange ----------------------------------------------
+
+    def first_wire(self, call: Call[Any]) -> tuple[dict[str, Any] | None, bool]:
+        """The body of a call's first exchange and whether it carries the
+        script. A script-bearing call is hash-first unless the API answered a
+        miss for that digest moments ago; a script the API could never accept
+        is refused before any round trip."""
+        if call.script_wire is None:
+            return call.wire, False
+        if call.has_script and call.script_bytes > call.limit:
+            raise ValidationError(
+                "script", f"encoded script exceeds the {call.limit // const.MIB} MiB API limit"
+            )
+        with_script = call.has_script and self.scripts.recently_missed(call.script_key)
+        return call.script_wire(with_script), with_script
+
+    def script_retry(
+        self, call: Call[Any], err: APIError, with_script: bool
+    ) -> dict[str, Any] | None:
+        """The body to resend after ``err``: the same call with the script,
+        when the API has no script for the digest it was sent."""
+        if (
+            call.script_wire is None
+            or not call.has_script
+            or with_script
+            or err.code not in SCRIPT_CACHE_CODES
+        ):
+            return None
+        self.scripts.mark_missed(call.script_key)
+        return call.script_wire(True)
+
+    def script_registered(self, call: Call[Any], with_script: bool) -> None:
+        """A script-bearing exchange succeeded: the API holds the script now."""
+        if with_script:
+            self.scripts.mark_registered(call.script_key)
 
     # -- request side -------------------------------------------------------
 
